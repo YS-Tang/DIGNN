@@ -21,7 +21,6 @@ wheels/
 MANIFEST
 
 *.ipynb_checkpoints
-*.ipynb
 
 .DS_Store
 .vscode/

@@ -26,7 +26,8 @@ class AtomsData(Data):
     注意：
         1. 模型不支持小于4个原子的分子体系；
         2. 对于周期性系统，一维原子链的情况需谨慎处理，rcut较小时可能有错误，建议使用data.utils.MonoatomicChain_check扩胞至2原子链；
-        2. 晶体传入时需要先添加cell和pbc（pbc默认三维），再设置if_pbc=True
+        3. 晶体传入时需要先添加cell和pbc（pbc默认三维），再设置if_pbc=True
+        4. 晶体体系和分子体系分开出理，避免混合batch计算
     """
     EPS = 1e-6
     
@@ -69,12 +70,13 @@ class AtomsData(Data):
         # 对单个结构也添加atom_batch, 以便global_decoder统一计算
         if not hasattr(self,'atom_batch'):
             self.atom_batch = torch.zeros_like(self.atom, dtype=torch.long, device=self.device)
+        self.if_pbc = torch.all(self.if_pbc)
         """
         ------------------PML层拓扑结构-------------------
         当实际可能的邻居数大于max_num_neighbors时, 生成的bond_index可能是单向的, 这在后续计算中会报错。
         因此在检查结束后再无向化处理
         """
-        if self.if_pbc:
+        if torch.all(self.if_pbc):
             (bond_index, cell_offset, _) = radius_graph_pbc(data=self, 
                                                             radius=pml_rcut, 
                                                             max_num_neighbors_threshold=pml_mnn,
@@ -103,7 +105,7 @@ class AtomsData(Data):
         
         
         # 计算位置对齐的符号
-        if self.if_pbc:
+        if torch.all(self.if_pbc):
             self.bond2angle_AliSign = Sign(bond_index_reo_bias, self.angle_index_reo).AlignmentSign()
         else:
             self.bond2angle_AliSign = Sign(self.bond_index_reo, self.angle_index_reo).AlignmentSign()

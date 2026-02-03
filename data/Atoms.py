@@ -45,6 +45,12 @@ class AtomsData(Data):
         super(AtomsData, self).__setattr__(key, value)
         if key == 'if_pbc' and value == True:
             self._crystal_check()
+    
+    # 该方法无用，原因未知
+    # def __cat_dim__(self, key: str, value, *args, **kwargs):
+    #     if key in ['if_pbc', 'properties', 'pbc]:
+    #         return None
+    #     return super().__cat_dim__(key, value, *args, **kwargs)
 
     @property
     def device(self) -> torch.device:
@@ -70,7 +76,9 @@ class AtomsData(Data):
         # 对单个结构也添加atom_batch, 以便global_decoder统一计算
         if not hasattr(self,'atom_batch'):
             self.atom_batch = torch.zeros_like(self.atom, dtype=torch.long, device=self.device)
-        self.if_pbc = torch.all(self.if_pbc)
+        if isinstance(self.properties[0], list):
+            self.properties = self.properties[0]
+            self.pbc = self.pbc[:3]
         """
         ------------------PML层拓扑结构-------------------
         当实际可能的邻居数大于max_num_neighbors时, 生成的bond_index可能是单向的, 这在后续计算中会报错。
@@ -115,7 +123,7 @@ class AtomsData(Data):
         """
         ------------------IML层拓扑结构-------------------
         """
-        if self.if_pbc:
+        if torch.all(self.if_pbc):
             (bondI_index, cell_offset_I, _) = radius_graph_pbc(data=self, 
                                                                 radius=iml_rcut, 
                                                                 max_num_neighbors_threshold=iml_mnn,
@@ -182,7 +190,7 @@ class AtomsData(Data):
         计算键长和键向量
         """
         self.bond_batch = self.atom_batch[self.bond_index_reo[0]]
-        if self.if_pbc:
+        if torch.all(self.if_pbc):
             cell_neighbors = degree(self.bond_batch).long()
             out = get_pbc_distances(self.pos, self.bond_index_reo.flip(0), self.cell, self.cell_offset_reo, cell_neighbors, False, True)
             _, self.BondLength_reo, BondVec_reo = out.values()
@@ -193,7 +201,7 @@ class AtomsData(Data):
         self.BondVec_reo_uni = BondVec_reo / (self.BondLength_reo + self.EPS)
         
         self.bondI_batch = self.atom_batch[self.bondI_index_reo[0]]
-        if self.if_pbc:
+        if torch.all(self.if_pbc):
             cell_neighbors_I = degree(self.bondI_batch).long()
             out = get_pbc_distances(self.pos, self.bondI_index_reo, self.cell, self.cell_offset_I_reo, cell_neighbors_I, False, True)
             _, self.BondLengthI_reo, BondIVec_reo = out.values()

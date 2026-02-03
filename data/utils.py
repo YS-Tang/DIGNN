@@ -141,6 +141,7 @@ def update_cplt_graph(basic_graph: AtomsData, store_device='cpu', pos_grad=False
     basic_graph.update_geo()
     if if_strip:
         basic_graph.strip_topo()
+    return basic_graph
 
 
 def MonoatomicChain_check(data: Atoms):

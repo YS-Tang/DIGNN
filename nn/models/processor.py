@@ -28,14 +28,15 @@ class BaseProcessor(ABC, nn.Module):
                  pml: int = 2,
                  iml: int = 4, 
                  residual: bool = True,
-                 dropout: float = 0.0):
+                 dropout: float = 0.0,
+                 init_nn_layer: int=3):
         super().__init__()
         self.pml = pml
         self.iml = iml
         self.residual = residual
         self.dropout = dropout
         
-        self._init_feature_nns(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim)
+        self._init_feature_nns(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, init_nn_layer)
         self.pml_node_only = None
         self.iml_node_only = None
         
@@ -44,26 +45,26 @@ class BaseProcessor(ABC, nn.Module):
         self.ang_dih_pmls = None
         self.atm_bnd_imls = None
     
-    def _init_feature_nns(self, atom_dim: int, bond_dim: int, ang_dim: int, dih_dim: int, bondI_dim: int) -> None:
+    def _init_feature_nns(self, atom_dim: int, bond_dim: int, ang_dim: int, dih_dim: int, bondI_dim: int, init_nn_layer: int) -> None:
         """初始化特征变换网络"""
         self.atm_nn = nn.Sequential(
-            MLP([atom_dim, atom_dim, atom_dim], act=nn.SiLU(), batch_norm=False, dropout=self.dropout),
+            MLP([atom_dim]*init_nn_layer, act=nn.SiLU(), batch_norm=False, dropout=self.dropout),
             nn.LayerNorm(atom_dim)
         )
         self.bnd_nn = nn.Sequential(
-            MLP([bond_dim, bond_dim, bond_dim], act=nn.SiLU(), batch_norm=False, dropout=self.dropout),
+            MLP([bond_dim]*init_nn_layer, act=nn.SiLU(), batch_norm=False, dropout=self.dropout),
             nn.LayerNorm(bond_dim)
         )
         self.ang_nn = nn.Sequential(
-            MLP([ang_dim, ang_dim, ang_dim], act=nn.SiLU(), batch_norm=False, dropout=self.dropout),
+            MLP([ang_dim]*init_nn_layer, act=nn.SiLU(), batch_norm=False, dropout=self.dropout),
             nn.LayerNorm(ang_dim)
         )
         self.dih_nn = nn.Sequential(
-            MLP([dih_dim, dih_dim, dih_dim], act=nn.SiLU(), batch_norm=False, dropout=self.dropout),
+            MLP([dih_dim]*init_nn_layer, act=nn.SiLU(), batch_norm=False, dropout=self.dropout),
             nn.LayerNorm(dih_dim)
         )
         self.bndI_nn = nn.Sequential(
-            MLP([bondI_dim, bondI_dim, bondI_dim], act=nn.SiLU(), batch_norm=False, dropout=self.dropout),
+            MLP([bondI_dim]*init_nn_layer, act=nn.SiLU(), batch_norm=False, dropout=self.dropout),
             nn.LayerNorm(bondI_dim)
         )
     
@@ -181,8 +182,9 @@ class GCN_Processor(BaseProcessor):
                  iml: int = 4, 
                  residual: bool = False,
                  dropout: float = 0.0,
-                 bondI_dim: int = 32):
-        super().__init__(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, pml, iml, residual, dropout)
+                 bondI_dim: int = 32,
+                 init_nn_layer: int = 3):
+        super().__init__(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, pml, iml, residual, dropout, init_nn_layer)
         
         self.pml_node_only = False
         self.iml_node_only = False
@@ -218,8 +220,9 @@ class GINE_Processor(BaseProcessor):
                  residual: bool = False,
                  dropout: float = 0.0,
                  bondI_dim: int = 32,
-                 gin_nn: List[int] = [64, 128, 64]):
-        super().__init__(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, pml, iml, residual, dropout)
+                 gin_nn: List[int] = [64, 128, 64],
+                 init_nn_layer: int = 3):
+        super().__init__(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, pml, iml, residual, dropout, init_nn_layer)
         
         self.pml_node_only = False
         self.iml_node_only = True
@@ -261,8 +264,9 @@ class GATv2_Processor(BaseProcessor):
                  residual: bool = False,
                  dropout: float = 0.0,
                  bondI_dim: int = 32,
-                 gat_heads: int = 1):
-        super().__init__(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, pml, iml, residual, dropout)
+                 gat_heads: int = 1,
+                 init_nn_layer: int = 3):
+        super().__init__(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, pml, iml, residual, dropout, init_nn_layer)
         
         self.pml_node_only = False
         self.iml_node_only = True
@@ -310,8 +314,9 @@ class EGAT_Processor(BaseProcessor):
                  dropout: float = 0.0,
                  bondI_dim: int = 32,
                  egat_heads: int = 4,
-                 egat_fc_layers: int = 2):
-        super().__init__(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, pml, iml, residual, dropout)
+                 egat_fc_layers: int = 2,
+                 init_nn_layer: int = 3):
+        super().__init__(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, pml, iml, residual, dropout, init_nn_layer)
         
         self.pml_node_only = False
         self.iml_node_only = False

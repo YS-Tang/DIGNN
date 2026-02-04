@@ -18,18 +18,26 @@ from torch_geometric.data import Dataset, InMemoryDataset
 
 from .Atoms import AtomsData
 
-def _check_SimplyConnected(pos, r_cut):
-    dm = distance_matrix(pos, pos)
+import os
+ENV_DEVICE = os.environ.get('DIGNN_ENV') or os.environ.get('DEVICE') or 'cpu'
 
+
+def _check_SimplyConnected(pos, r_cut):
+    device = torch.device(ENV_DEVICE)
+    
+    pos_tensor = torch.from_numpy(pos).float().to(device)
+    dm = torch.cdist(pos_tensor, pos_tensor)
+    
     threshold = r_cut
-    adjacency_matrix = (dm <= threshold).astype(int) - np.eye(len(pos), dtype=int)
-    sparse_adjacency_matrix = csr_matrix(adjacency_matrix)
+    adjacency_matrix = (dm <= threshold).int() - torch.eye(len(pos), dtype=torch.int, device=device)
+    
+    adjacency_matrix_np = adjacency_matrix.cpu().numpy()
+    sparse_adjacency_matrix = csr_matrix(adjacency_matrix_np)
     n_components, labels = connected_components(sparse_adjacency_matrix, directed=False)
     size_components = np.bincount(labels)
     
     if np.max(size_components) >= 4: return True # 要存在4原子的连通子图
     else: return False
-    
 
 def ase2AtomsData(ase_atoms, check_rcut: float, properties: list[str]=None, if_MonoatomicChain_check: bool=True):
     """
@@ -48,9 +56,11 @@ def ase2AtomsData(ase_atoms, check_rcut: float, properties: list[str]=None, if_M
         periodic_expand = np.array([1,1,1]) + pbc * 2 # 在周期方向扩展至3倍, 单原子链情况需谨慎处理。
         atoms_expand = ase_atoms * periodic_expand
         if not _check_SimplyConnected(atoms_expand.positions, check_rcut):
+            print(ase_atoms)
             raise ValueError(f"该晶体在当前check_rcut={check_rcut}下不满足至少4原子连通，请检查check_rcut取值。")
     else: 
-        if not _check_SimplyConnected(pos, r_cut):
+        if not _check_SimplyConnected(pos, check_rcut):
+            print(ase_atoms)
             raise ValueError(f"该分子在当前check_rcut={check_rcut}下不满足至少4原子连通，请检查分子数和check_rcut取值，如果是晶体注意开启pbc。")
     
     data = AtomsData(pos=pos,atom=atom_num)
@@ -108,6 +118,7 @@ def AtomsData2ase(data: AtomsData, properties: list[str]=None) -> Atoms:
 
 def AtomsData2ase_list(data_batch: AtomsData, properties: list[str]=None) -> list[Atoms]:
     raise NotImplementedError("AtomsData2ase_list 未实现")
+    
 def update_basic_batch(loader: DataLoader, pml_rcut, pml_mnn, iml_rcut,iml_mnn, store_device='cpu', logger=None) -> list[AtomsData]:
     """
     用以批量更新topo

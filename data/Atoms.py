@@ -78,7 +78,8 @@ class AtomsData(Data):
             self.atom_batch = torch.zeros_like(self.atom, dtype=torch.long, device=self.device)
         if isinstance(self.properties[0], list):
             self.properties = self.properties[0]
-            self.pbc = self.pbc[:3]
+            if hasattr(self, 'pbc'):
+                self.pbc = self.pbc[:3]
         """
         ------------------PML层拓扑结构-------------------
         当实际可能的邻居数大于max_num_neighbors时, 生成的bond_index可能是单向的, 这在后续计算中会报错。

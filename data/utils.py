@@ -49,7 +49,6 @@ def ase2AtomsData(ase_atoms, check_rcut: float, properties: list[str]=None, if_M
     if if_MonoatomicChain_check: 
         ase_atoms = MonoatomicChain_check(ase_atoms)
     atom_num = torch.from_numpy(ase_atoms.get_atomic_numbers()).long()
-    pos = torch.from_numpy(ase_atoms.positions).float()
     
     pbc = ase_atoms.get_pbc()
     if any(pbc):
@@ -59,11 +58,11 @@ def ase2AtomsData(ase_atoms, check_rcut: float, properties: list[str]=None, if_M
             print(ase_atoms)
             raise ValueError(f"该晶体在当前check_rcut={check_rcut}下不满足至少4原子连通，请检查check_rcut取值。")
     else: 
-        if not _check_SimplyConnected(pos, check_rcut):
+        if not _check_SimplyConnected(ase_atoms.positions, check_rcut):
             print(ase_atoms)
             raise ValueError(f"该分子在当前check_rcut={check_rcut}下不满足至少4原子连通，请检查分子数和check_rcut取值，如果是晶体注意开启pbc。")
     
-    data = AtomsData(pos=pos,atom=atom_num)
+    data = AtomsData(pos=torch.from_numpy(ase_atoms.positions).float(),atom=atom_num)
     if any(pbc):
         # 先添加cell，添加if_pbc时触发晶体格式检查
         data.cell = torch.from_numpy(ase_atoms.cell.array).float()
@@ -119,25 +118,17 @@ def AtomsData2ase(data: AtomsData, properties: list[str]=None) -> Atoms:
 def AtomsData2ase_list(data_batch: AtomsData, properties: list[str]=None) -> list[Atoms]:
     raise NotImplementedError("AtomsData2ase_list 未实现")
     
-def update_basic_batch(loader: DataLoader, pml_rcut, pml_mnn, iml_rcut,iml_mnn, store_device='cpu', logger=None) -> list[AtomsData]:
+def update_basic_batch(loader: DataLoader, pml_rcut, pml_mnn, iml_rcut, iml_mnn, store_device='cpu', logger=None) -> list[AtomsData]:
     """
     用以批量更新topo
     """
 
     basic_batch = []
-    start_time = time.time()
     
-    for i,batch in enumerate(loader):
+    for batch in tqdm.tqdm(loader, desc="Updating topo", unit="batch"):
         batch.update_topo(pml_rcut=pml_rcut, pml_mnn=pml_mnn, 
                           iml_rcut=iml_rcut, iml_mnn=iml_mnn)
         basic_batch.append(batch.to(store_device))
-        
-        if i % 10 == 0:
-            message = f'Processed batch {i}, time_cost:{time.time()-start_time:.3f}s'
-            if logger is not None: logger.info(message)
-            else: print(message)
-            
-            start_time = time.time()
         
     return basic_batch
 

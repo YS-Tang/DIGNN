@@ -1,7 +1,7 @@
 import os
 import torch
 from torch_geometric.utils import to_undirected, coalesce
-from typing import List, Union
+from typing import List, Union, Optional
 
 ENV_DEVICE = os.environ.get('DIGNN_ENV') or os.environ.get('DEVICE') or 'cpu'
 
@@ -107,68 +107,113 @@ def NeboEdge2OpstEdge(edge_index: torch.Tensor, edge_pairs: torch.Tensor) -> tor
     return new_edges.to(input_device)
 
 class AtomIndexMapper:
-    def __init__(self, known_atom_nums: List[int], padding_index: int = 0, device: str = 'cpu'):
+    def __init__(
+        self,
+        known_atomic_numbers: Optional[List[int]] = None,
+        padding_index: int = 0,
+        device: str = 'cpu'
+    ):
         """
-        初始化映射器：
-        - 使用一维张量作为查找表，原子序号作为索引
-        - 支持向量化输入和 GPU 加速
-        - 严格检查未知原子并报错
+        原子序号到嵌入索引的映射器。
+        
+        使用查找表实现向量化映射，支持 GPU 加速。
 
-        :param known_atom_nums: 已知原子序号列表（如 [1, 6, 8]）
-        :param padding_index: 填充位置的索引（默认 0）
-        :param device: 计算设备（'cpu' 或 'cuda'）
+        Args:
+            known_atomic_numbers: 已知原子序号列表（如 [1, 6, 8]），可为 None 延迟设置
+            padding_index: 填充位置的索引（默认 0）
+            device: 计算设备（'cpu' 或 'cuda'）
         """
         self.padding_index = padding_index
         self.device = device
-        
-        # 去重并排序
-        self.known_atom_nums = torch.unique(
-            torch.tensor(known_atom_nums, dtype=torch.long, device=device),
+        self._known_atomic_numbers: List[int] = []
+        self._lookup_tensor: Optional[torch.Tensor] = None
+        self._num_embeddings: int = padding_index + 1
+
+        if known_atomic_numbers is not None:
+            self.set_known_atomic_numbers(known_atomic_numbers)
+
+    @property
+    def known_atomic_numbers(self) -> List[int]:
+        return self._known_atomic_numbers
+
+    @property
+    def lookup_tensor(self) -> torch.Tensor:
+        if self._lookup_tensor is None:
+            raise RuntimeError("未设置已知原子序号，请先调用 set_known_atomic_numbers()")
+        return self._lookup_tensor
+
+    @property
+    def num_embeddings(self) -> int:
+        return self._num_embeddings
+
+    def set_known_atomic_numbers(self, atomic_numbers: List[int]) -> None:
+        """
+        设置或更新已知原子序号列表。
+
+        Args:
+            atomic_numbers: 原子序号列表
+        """
+        if not atomic_numbers.any():
+            raise ValueError("原子序号列表不能为空")
+
+        unique_nums = torch.unique(
+            torch.tensor(atomic_numbers, dtype=torch.long, device=self.device),
             sorted=True
-        ).tolist()
-        
-        # 创建查找张量：位置为原子序号，值为映射后的索引
-        max_atom_num = max(self.known_atom_nums) if self.known_atom_nums else 0
-        self.lookup_tensor = torch.full(
-            (max_atom_num + 1,), 
-            -1,  # 默认未知原子为 -1
-            dtype=torch.long,
-            device=device
         )
-        
-        # 填充已知原子的映射值（从 padding_index + 1 开始）
-        for idx, atom in enumerate(self.known_atom_nums):
-            self.lookup_tensor[atom] = idx + self.padding_index + 1
-        
-        # 计算嵌入层参数数量
-        self.num_embeddings = len(self.known_atom_nums) + self.padding_index + 1
+        self._known_atomic_numbers = unique_nums.tolist()
+
+        max_atom_num = int(unique_nums.max().item())
+        self._lookup_tensor = torch.full(
+            (max_atom_num + 1,),
+            -1,
+            dtype=torch.long,
+            device=self.device
+        )
+
+        for idx, atom in enumerate(self._known_atomic_numbers):
+            self._lookup_tensor[atom] = idx + self.padding_index + 1
+
+        self._num_embeddings = len(self._known_atomic_numbers) + self.padding_index + 1
 
     def __call__(self, atom_nums: Union[int, List[int], torch.Tensor]) -> torch.Tensor:
         """
-        输入原子序号（标量、列表、张量），返回映射后的索引张量
-        - 自动检查未知原子并报错
-        - 支持 GPU 加速
+        将原子序号映射为嵌入索引。
+
+        Args:
+            atom_nums: 原子序号（标量、列表或张量）
+
+        Returns:
+            映射后的索引张量
+
+        Raises:
+            ValueError: 遇到未知原子序号时抛出
         """
         input_tensor = torch.as_tensor(atom_nums, dtype=torch.long, device=self.device)
-        
-        # 向量化查找
         output = self.lookup_tensor[input_tensor]
-        
-        # 检查未知原子
-        if (output == -1).any():
-            invalid_atoms = input_tensor[output == -1].unique().tolist()
-            raise ValueError(f"未知原子序号: {invalid_atoms}，允许的原子序号为 {self.known_atom_nums}")
-        
+
+        invalid_mask = output == -1
+        if invalid_mask.any():
+            invalid_atoms = input_tensor[invalid_mask].unique().tolist()
+            raise ValueError(
+                f"未知原子序号: {invalid_atoms}，允许的原子序号为 {self._known_atomic_numbers}"
+            )
+
         return output
 
     def get_vocab(self) -> dict:
+        """返回原子序号到索引的映射字典。"""
         return {
             atom: idx + self.padding_index + 1
-            for idx, atom in enumerate(self.known_atom_nums)
+            for idx, atom in enumerate(self._known_atomic_numbers)
         }
 
-    def __repr__(self):
-        return f"LookupAtomIndexMapper(padding={self.padding_index}, num_embeddings={self.num_embeddings}, device={self.device})"
+    def __repr__(self) -> str:
+        return (
+            f"AtomIndexMapper(padding={self.padding_index}, "
+            f"num_embeddings={self._num_embeddings}, "
+            f"num_known_atoms={len(self._known_atomic_numbers)}, "
+            f"device={self.device})"
+        )
     
 
 from torch_geometric.nn import radius_graph as radius_graph_pyg

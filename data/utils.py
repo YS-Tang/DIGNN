@@ -4,6 +4,8 @@ import time
 
 import numpy as np
 import pandas as pd
+from joblib import Parallel, delayed
+import multiprocessing
 
 from ase.data import atomic_numbers
 from ase import Atoms
@@ -117,20 +119,29 @@ def AtomsData2ase(data: AtomsData, properties: list[str]=None) -> Atoms:
 
 def AtomsData2ase_list(data_batch: AtomsData, properties: list[str]=None) -> list[Atoms]:
     raise NotImplementedError("AtomsData2ase_list 未实现")
-    
-def update_basic_batch(loader: DataLoader, pml_rcut, pml_mnn, iml_rcut, iml_mnn, store_device='cpu', logger=None) -> list[AtomsData]:
-    """
-    用以批量更新topo
-    """
 
-    basic_batch = []
+def _process_single_batch(batch, pml_rcut, pml_mnn, iml_rcut, iml_mnn, store_device):
+    """单个batch的处理函数"""
+    batch.update_topo(pml_rcut=pml_rcut, pml_mnn=pml_mnn, 
+                      iml_rcut=iml_rcut, iml_mnn=iml_mnn)
+    return batch.to(store_device)
+
+def update_basic_batch(loader: DataLoader, pml_rcut, pml_mnn, iml_rcut, iml_mnn, 
+                       store_device='cpu', num_workers=None) -> list[AtomsData]:
+    """
+    用以批量更新topo（多进程版本）
+    """
+    if num_workers is None:
+        num_workers = 1
     
-    for batch in tqdm.tqdm(loader, desc="Updating topo", unit="batch"):
-        batch.update_topo(pml_rcut=pml_rcut, pml_mnn=pml_mnn, 
-                          iml_rcut=iml_rcut, iml_mnn=iml_mnn)
-        basic_batch.append(batch.to(store_device))
-        
-    return basic_batch
+    batches = list(loader)
+    
+    results = Parallel(n_jobs=num_workers, prefer="processes")(
+        delayed(_process_single_batch)(batch, pml_rcut, pml_mnn, iml_rcut, iml_mnn, store_device)
+        for batch in tqdm.tqdm(batches, desc="Updating topo", unit="batch")
+    )
+    
+    return results
 
 def update_cplt_graph(basic_graph: AtomsData, store_device='cpu', pos_grad=False, if_strip=True):
     """

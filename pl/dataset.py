@@ -75,17 +75,17 @@ class DataModule(pl.LightningDataModule):
             if self.test_batch is not None:
                 test_data = self._map_process(test_data)
         
-        train_loader = DataLoader(train_data, batch_size=self.batch_size, num_workers=self.num_workers, shuffle=True, follow_batch=['atom'])
+        train_loader = DataLoader(train_data, batch_size=self.batch_size, shuffle=True, follow_batch=['atom'])
         if self.val_batch is not None:
-            val_loader = DataLoader(val_data, batch_size=self.batch_size, num_workers=self.num_workers, shuffle=False, follow_batch=['atom'])
+            val_loader = DataLoader(val_data, batch_size=self.batch_size, shuffle=False, follow_batch=['atom'])
         if self.test_batch is not None:
-            test_loader = DataLoader(test_data, batch_size=self.batch_size, num_workers=self.num_workers, shuffle=False, follow_batch=['atom'])
+            test_loader = DataLoader(test_data, batch_size=self.batch_size, shuffle=False, follow_batch=['atom'])
         
-        train_batch = update_basic_batch(train_loader, self.pml_rcut, self.pml_mnn, self.iml_rcut, self.iml_mnn, self.store_device)
+        train_batch = update_basic_batch(train_loader, self.pml_rcut, self.pml_mnn, self.iml_rcut, self.iml_mnn, self.store_device, self.num_workers)
         if self.val_batch is not None:
-            val_batch = update_basic_batch(val_loader, self.pml_rcut, self.pml_mnn, self.iml_rcut, self.iml_mnn, self.store_device)
+            val_batch = update_basic_batch(val_loader, self.pml_rcut, self.pml_mnn, self.iml_rcut, self.iml_mnn, self.store_device, self.num_workers)
         if self.test_batch is not None:
-            test_batch = update_basic_batch(test_loader, self.pml_rcut, self.pml_mnn, self.iml_rcut, self.iml_mnn, self.store_device)
+            test_batch = update_basic_batch(test_loader, self.pml_rcut, self.pml_mnn, self.iml_rcut, self.iml_mnn, self.store_device, self.num_workers)
 
         if self.return_type == 'basic':
             self.train_batch = train_batch

@@ -1,4 +1,5 @@
 from torch import nn
+from ..utils import init_weights
 
 class DIGNN(nn.Module):
     def __init__(self, encoder, processor, decoder):
@@ -6,6 +7,7 @@ class DIGNN(nn.Module):
         self.encoder   = encoder
         self.processor = processor
         self.decoder   = decoder
+        self.apply(init_weights)
     
     def forward(self, data):
         x_atm, x_bnd, x_ang, x_dih, x_bndI = data.atom, data.BondLength_reo, data.CosAng_reo, data.CosDih_reo, data.BondLengthI_reo # 均为reorgnization数据

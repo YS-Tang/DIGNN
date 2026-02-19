@@ -1,3 +1,4 @@
 from .utils import AtomIndexMapper
+from .plot import plot_comparison
 
-__all__ = ['AtomIndexMapper']
+__all__ = ['AtomIndexMapper', 'plot_comparison']

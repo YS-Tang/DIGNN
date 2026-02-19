@@ -67,7 +67,7 @@ class DataModule(pl.LightningDataModule):
         
         if self.mapper is not None:
             if self.mapper.known_atomic_numbers == []:
-                all_atom_nums = np.unique(np.array([data.atom.numpy() for data in self.atomsdata]))
+                all_atom_nums = np.unique(np.concatenate([data.atom.numpy() for data in self.atomsdata]))
                 self.mapper.set_known_atomic_numbers(all_atom_nums)
             train_data = self._map_process(train_data)
             if self.val_batch is not None:

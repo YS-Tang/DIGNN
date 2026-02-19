@@ -2,6 +2,7 @@ import pytorch_lightning as pl
 import torch
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import OneCycleLR
+import numpy as np
 
 from ..nn.models.dignn import DIGNN
 from ..data.utils import update_cplt_graph
@@ -29,6 +30,8 @@ class TrainModule(pl.LightningModule):
         self.criterion = torch.nn.MSELoss()
         self.mae_criterion = torch.nn.L1Loss()
         self.save_hyperparameters(ignore=["model"])
+        
+        self.test_results = {'preds': [], 'targets': []}
 
     def forward(self, cplt):
         return self.model(cplt)
@@ -61,7 +64,14 @@ class TrainModule(pl.LightningModule):
         self.log("test_loss", loss, prog_bar=True, on_epoch=True)
         self.log("test_mae_prop", mae_prop, prog_bar=True, on_epoch=True)
         
+        self.test_results['preds'].append(prop.view(-1, 1).detach().cpu().numpy())
+        self.test_results['targets'].append(cplt[self.prop].view(-1, 1).detach().cpu().numpy())
+        
         return {"test_loss": loss, "test_mae_prop": mae_prop}
+    
+    def on_test_epoch_end(self):
+        self.test_results['preds'] = np.concatenate(self.test_results['preds'], axis=0)
+        self.test_results['targets'] = np.concatenate(self.test_results['targets'], axis=0)
     
     def configure_optimizers(self):
         optimizer = AdamW(self.model.parameters(),
@@ -105,6 +115,10 @@ class TrainModule_FF(pl.LightningModule):
         self.criterion = torch.nn.MSELoss()
         self.mae_criterion = torch.nn.L1Loss()
         self.save_hyperparameters(ignore=["model"])
+        
+        self.test_results = {'preds_ene': [], 'targets_ene': [],
+                             'preds_force': [], 'targets_force': [], 
+                             'atom_num': []}
 
     def forward(self, basic):
         torch.set_grad_enabled(True)
@@ -161,7 +175,20 @@ class TrainModule_FF(pl.LightningModule):
         self.log("test_mae_ene_peratom", mae_ene_peratom, prog_bar=True, on_epoch=True)
         self.log("test_mae_force", mae_force, prog_bar=True, on_epoch=True)
         
+        self.test_results['preds_ene'].append(energy.view(-1, 1).detach().cpu().numpy())
+        self.test_results['targets_ene'].append(batch.energy.view(-1, 1).detach().cpu().numpy())
+        self.test_results['preds_force'].append(force.view(-1, 3).detach().cpu().numpy())
+        self.test_results['targets_force'].append(batch.force.view(-1, 3).detach().cpu().numpy())
+        self.test_results['atom_num'].append(atom_num.cpu().numpy())
+        
         return {"test_mae_ene": mae_ene, "test_mae_ene_peratom": mae_ene_peratom, "test_mae_force": mae_force}
+    
+    def on_test_epoch_end(self):
+        self.test_results['preds_ene'] = np.concatenate(self.test_results['preds_ene'], axis=0)
+        self.test_results['targets_ene'] = np.concatenate(self.test_results['targets_ene'], axis=0)
+        self.test_results['preds_force'] = np.concatenate(self.test_results['preds_force'], axis=0)
+        self.test_results['targets_force'] = np.concatenate(self.test_results['targets_force'], axis=0)
+        self.test_results['atom_num'] = np.concatenate(self.test_results['atom_num'], axis=0)
     
     def configure_optimizers(self):
         optimizer = AdamW(self.model.parameters(),

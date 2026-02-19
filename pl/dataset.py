@@ -118,7 +118,7 @@ class DataModule(pl.LightningDataModule):
         for b in tqdm.tqdm(basic, desc='cplt graph'):
             c = update_cplt_graph(b,
                                 store_device=self.store_device, 
-                                pos_grad=True, 
+                                pos_grad=False, 
                                 if_strip=True)
             cplt.append(c)
         return cplt

@@ -75,3 +75,4 @@ outputs/
 *.tmp
 *.bak
 *.cache
+lightning_logs/

@@ -16,6 +16,7 @@ class TrainModule(pl.LightningModule):
                 adamw_betas: tuple = (0.9, 0.999),
                 onecycle_total_steps: int = None,
                 onecycle_final_div_factor: float = 1e+5,
+                empty_cache_every_epoch: bool = False,
                 ):
         super().__init__()
         self.model = model
@@ -26,6 +27,7 @@ class TrainModule(pl.LightningModule):
 
         self.onecycle_total_steps = onecycle_total_steps
         self.onecycle_final_div_factor = onecycle_final_div_factor
+        self.empty_cache_every_epoch = empty_cache_every_epoch
         
         self.criterion = torch.nn.MSELoss()
         self.mae_criterion = torch.nn.L1Loss()
@@ -37,7 +39,7 @@ class TrainModule(pl.LightningModule):
         return self.model(cplt)
 
     def training_step(self, batch, batch_idx):
-        cplt = batch.to(self.device)
+        cplt = batch#.to(self.device)
         prop = self(cplt)
         loss = self.criterion(prop.view(-1, 1), cplt[self.prop].view(-1, 1))
         
@@ -45,7 +47,7 @@ class TrainModule(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        cplt = batch.to(self.device)
+        cplt = batch#.to(self.device)
         prop = self(cplt)
         loss = self.criterion(prop.view(-1, 1), cplt[self.prop].view(-1, 1))
         mae_prop = self.mae_criterion(prop.view(-1, 1), cplt[self.prop].view(-1, 1))
@@ -56,7 +58,7 @@ class TrainModule(pl.LightningModule):
         return {"val_loss": loss, "val_mae_prop": mae_prop}
 
     def test_step(self, batch, batch_idx):
-        cplt = batch.to(self.device)
+        cplt = batch#.to(self.device)
         prop = self(cplt)
         loss = self.criterion(prop.view(-1, 1), cplt[self.prop].view(-1, 1))
         mae_prop = self.mae_criterion(prop.view(-1, 1), cplt[self.prop].view(-1, 1))
@@ -68,6 +70,10 @@ class TrainModule(pl.LightningModule):
         self.test_results['targets'].append(cplt[self.prop].view(-1, 1).detach().cpu().numpy())
         
         return {"test_loss": loss, "test_mae_prop": mae_prop}
+    
+    def on_train_epoch_end(self):
+        if self.empty_cache_every_epoch and self.trainer.is_global_zero:
+            torch.cuda.empty_cache()
     
     def on_test_epoch_end(self):
         self.test_results['preds'] = np.concatenate(self.test_results['preds'], axis=0)
@@ -101,6 +107,7 @@ class TrainModule_FF(pl.LightningModule):
                 adamw_betas: tuple = (0.9, 0.999),
                 onecycle_total_steps: int = None,
                 onecycle_final_div_factor: float = 1e+5,
+                empty_cache_every_epoch: bool = False,
                 ):
         super().__init__()
         self.model = model
@@ -111,6 +118,7 @@ class TrainModule_FF(pl.LightningModule):
         self.force_weight = force_weight
         self.onecycle_total_steps = onecycle_total_steps
         self.onecycle_final_div_factor = onecycle_final_div_factor
+        self.empty_cache_every_epoch = empty_cache_every_epoch
         
         self.criterion = torch.nn.MSELoss()
         self.mae_criterion = torch.nn.L1Loss()
@@ -183,6 +191,9 @@ class TrainModule_FF(pl.LightningModule):
         
         return {"test_mae_ene": mae_ene, "test_mae_ene_peratom": mae_ene_peratom, "test_mae_force": mae_force}
     
+    def on_train_epoch_end(self):
+        if self.empty_cache_every_epoch and self.trainer.is_global_zero:
+            torch.cuda.empty_cache()
     def on_test_epoch_end(self):
         self.test_results['preds_ene'] = np.concatenate(self.test_results['preds_ene'], axis=0)
         self.test_results['targets_ene'] = np.concatenate(self.test_results['targets_ene'], axis=0)

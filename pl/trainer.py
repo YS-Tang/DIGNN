@@ -39,18 +39,18 @@ class TrainModule(pl.LightningModule):
         return self.model(cplt)
 
     def training_step(self, batch, batch_idx):
-        cplt = batch#.to(self.device)
-        prop = self(cplt)
-        loss = self.criterion(prop.view(-1, 1), cplt[self.prop].view(-1, 1))
+        # cplt = batch#.to(self.device)
+        prop = self(batch)
+        loss = self.criterion(prop.view(-1, 1), batch[self.prop].view(-1, 1))
         
         self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
-        cplt = batch#.to(self.device)
-        prop = self(cplt)
-        loss = self.criterion(prop.view(-1, 1), cplt[self.prop].view(-1, 1))
-        mae_prop = self.mae_criterion(prop.view(-1, 1), cplt[self.prop].view(-1, 1))
+        # cplt = batch#.to(self.device)
+        prop = self(batch)
+        loss = self.criterion(prop.view(-1, 1), batch[self.prop].view(-1, 1))
+        mae_prop = self.mae_criterion(prop.view(-1, 1), batch[self.prop].view(-1, 1))
         
         self.log("val_loss", loss, prog_bar=True, on_epoch=True)
         self.log("val_mae_prop", mae_prop, prog_bar=True, on_epoch=True)
@@ -58,16 +58,16 @@ class TrainModule(pl.LightningModule):
         return {"val_loss": loss, "val_mae_prop": mae_prop}
 
     def test_step(self, batch, batch_idx):
-        cplt = batch#.to(self.device)
-        prop = self(cplt)
-        loss = self.criterion(prop.view(-1, 1), cplt[self.prop].view(-1, 1))
-        mae_prop = self.mae_criterion(prop.view(-1, 1), cplt[self.prop].view(-1, 1))
+        # cplt = batch#.to(self.device)
+        prop = self(batch)
+        loss = self.criterion(prop.view(-1, 1), batch[self.prop].view(-1, 1))
+        mae_prop = self.mae_criterion(prop.view(-1, 1), batch[self.prop].view(-1, 1))
         
         self.log("test_loss", loss, prog_bar=True, on_epoch=True)
         self.log("test_mae_prop", mae_prop, prog_bar=True, on_epoch=True)
         
         self.test_results['preds'].append(prop.view(-1, 1).detach().cpu().numpy())
-        self.test_results['targets'].append(cplt[self.prop].view(-1, 1).detach().cpu().numpy())
+        self.test_results['targets'].append(batch[self.prop].view(-1, 1).detach().cpu().numpy())
         
         return {"test_loss": loss, "test_mae_prop": mae_prop}
     

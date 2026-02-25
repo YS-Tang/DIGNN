@@ -14,7 +14,7 @@ class Decoder(nn.Module):
 
     def forward(self, h_atm, atm_batch=None):
         if atm_batch is not None:
-            h_atm_pooled = scatter(h_atm, atm_batch, dim=0, reduce=self.reduce_method)
+            h_atm_pooled = scatter(h_atm, atm_batch, dim=0, reduce=self.reduce_method, dim_size=atm_batch.unique().numel())
             h_pooled = h_atm_pooled
         else:
             h_pooled = h_atm.mean(dim=0)

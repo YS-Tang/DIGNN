@@ -142,15 +142,15 @@ class BaseProcessor(ABC, nn.Module):
                                                             self.atm_bnd_pmls):
                 h_ang, h_dih_cplt = ang_dih_pml(h_ang, edge_index_dih, h_dih[index_dih_map])
                 if self.pml > 1:
-                    h_dih = scatter(h_dih_cplt, index_dih_map, dim=0, reduce='mean')
+                    h_dih = scatter(h_dih_cplt, index_dih_map, dim=0, reduce='mean', dim_size=h_dih.shape[0])
                     
                 h_bnd, h_ang_cplt = bnd_ang_pml(h_bnd, edge_index_ang, h_ang[index_ang_map])
                 if self.pml > 1:
-                    h_ang = scatter(h_ang_cplt, index_ang_map, dim=0, reduce='mean')
+                    h_ang = scatter(h_ang_cplt, index_ang_map, dim=0, reduce='mean', dim_size=h_ang.shape[0])
                     
                 h_atm, h_bnd_cplt = atm_bnd_pml(h_atm, edge_index_bnd, h_bnd[index_bond_map])
                 if self.pml > 1:
-                    h_bnd = scatter(h_bnd_cplt, index_bond_map, dim=0, reduce='mean')
+                    h_bnd = scatter(h_bnd_cplt, index_bond_map, dim=0, reduce='mean', dim_size=h_bnd.shape[0])
 
         return h_atm
     
@@ -166,7 +166,7 @@ class BaseProcessor(ABC, nn.Module):
         else:
             for atm_bnd_iml in self.atm_bnd_imls:
                 h_atm, h_bndI_cplt = atm_bnd_iml(h_atm, edge_index_bndI, h_bndI[index_bondI_map])
-                h_bndI = scatter(h_bndI_cplt, index_bondI_map, dim=0, reduce='mean')
+                h_bndI = scatter(h_bndI_cplt, index_bondI_map, dim=0, reduce='mean', dim_size=h_bndI.shape[0])
         return h_atm
 
 

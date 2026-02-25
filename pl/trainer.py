@@ -10,6 +10,7 @@ from ..data.utils import update_cplt_graph
 class TrainModule(pl.LightningModule):
     def __init__(self,
                 model,
+                compile_model: bool = False,
                 lr: float = 1e-3,
                 prop: str = 'prop',
                 adamw_weight_decay: float = 1e-2,
@@ -20,6 +21,8 @@ class TrainModule(pl.LightningModule):
                 ):
         super().__init__()
         self.model = model
+        if compile_model:
+            self.model = torch.compile(self.model)
         self.lr = lr
         self.adamw_weight_decay = adamw_weight_decay
         self.adamw_betas = adamw_betas
@@ -99,6 +102,7 @@ class TrainModule(pl.LightningModule):
 class TrainModule_FF(pl.LightningModule):
     def __init__(self,
                 model: DIGNN,
+                compile_model: bool = False,
                 lr: float = 1e-3,
                 energy_weight: float = 0.1,
                 force_weight: float = 1.0,
@@ -110,6 +114,8 @@ class TrainModule_FF(pl.LightningModule):
                 ):
         super().__init__()
         self.model = model
+        if compile_model:
+            self.model = torch.compile(self.model)
         self.lr = lr
         self.adamw_weight_decay = adamw_weight_decay
         self.adamw_betas = adamw_betas

@@ -76,7 +76,7 @@ class AtomsData(Data):
         # 对单个结构也添加atom_batch, 以便global_decoder统一计算
         if not hasattr(self,'atom_batch'):
             self.atom_batch = torch.zeros_like(self.atom, dtype=torch.long, device=self.device)
-        if isinstance(self.properties[0], list):
+        if len(self.properties) > 0 and isinstance(self.properties[0], list):
             self.properties = self.properties[0]
             if hasattr(self, 'pbc'):
                 self.pbc = self.pbc[:3]
@@ -85,7 +85,7 @@ class AtomsData(Data):
         当实际可能的邻居数大于max_num_neighbors时, 生成的bond_index可能是单向的, 这在后续计算中会报错。
         因此在检查结束后再无向化处理
         """
-        if torch.all(self.if_pbc):
+        if torch.all(torch.as_tensor(self.if_pbc)):
             (bond_index, cell_offset, _) = radius_graph_pbc(data=self, 
                                                             radius=pml_rcut, 
                                                             max_num_neighbors_threshold=pml_mnn,
@@ -114,7 +114,7 @@ class AtomsData(Data):
         
         
         # 计算位置对齐的符号
-        if torch.all(self.if_pbc):
+        if torch.all(torch.as_tensor(self.if_pbc)):
             self.bond2angle_AliSign = Sign(bond_index_reo_bias, self.angle_index_reo).AlignmentSign()
         else:
             self.bond2angle_AliSign = Sign(self.bond_index_reo, self.angle_index_reo).AlignmentSign()
@@ -124,7 +124,7 @@ class AtomsData(Data):
         """
         ------------------IML层拓扑结构-------------------
         """
-        if torch.all(self.if_pbc):
+        if torch.all(torch.as_tensor(self.if_pbc)):
             (bondI_index, cell_offset_I, _) = radius_graph_pbc(data=self, 
                                                                 radius=iml_rcut, 
                                                                 max_num_neighbors_threshold=iml_mnn,
@@ -191,7 +191,7 @@ class AtomsData(Data):
         计算键长和键向量
         """
         self.bond_batch = self.atom_batch[self.bond_index_reo[0]]
-        if torch.all(self.if_pbc):
+        if torch.all(torch.as_tensor(self.if_pbc)):
             cell_neighbors = degree(self.bond_batch).long()
             out = get_pbc_distances(self.pos, self.bond_index_reo.flip(0), self.cell, self.cell_offset_reo, cell_neighbors, False, True)
             _, self.BondLength_reo, BondVec_reo = out.values()
@@ -202,7 +202,7 @@ class AtomsData(Data):
         self.BondVec_reo_uni = BondVec_reo / (self.BondLength_reo + self.EPS)
         
         self.bondI_batch = self.atom_batch[self.bondI_index_reo[0]]
-        if torch.all(self.if_pbc):
+        if torch.all(torch.as_tensor(self.if_pbc)):
             cell_neighbors_I = degree(self.bondI_batch).long()
             out = get_pbc_distances(self.pos, self.bondI_index_reo, self.cell, self.cell_offset_I_reo, cell_neighbors_I, False, True)
             _, self.BondLengthI_reo, BondIVec_reo = out.values()

@@ -8,11 +8,16 @@ from ase.calculators.calculator import Calculator as Calculator_base
 
 class Calculator(Calculator_base):
     implemented_properties = ['energy', 'forces']
-    def __init__(self, model, mapper, **kwargs):
+    def __init__(self, model, mapper, pml_rcut, pml_mnn, iml_rcut, iml_mnn, device='cpu', **kwargs):
         super().__init__(**kwargs)
         self.model = model
+        self.model.eval()
         self.mapper = mapper
-        self.device = 'cpu'
+        self.pml_rcut = pml_rcut
+        self.pml_mnn = pml_mnn
+        self.iml_rcut = iml_rcut
+        self.iml_mnn = iml_mnn
+        self.device = device
         
         for key, value in kwargs.items():
             setattr(self, key, value)
@@ -31,10 +36,13 @@ class Calculator(Calculator_base):
         }
 
     def DIGNN_calculate(self):
-        data = ase2AtomsData(self.atoms, check_rcut=self.pml_cut)
+        data = ase2AtomsData(self.atoms, check_rcut=self.pml_rcut)
         data.atom = self.mapper(data.atom)
         data.to(self.device)
-        data.update_topo(pml_rcut=self.pml_cut, pml_mnn=self.pml_mnn, iml_rcut=self.iml_cut, iml_mnn=self.iml_mnn)
+        data.update_topo(pml_rcut=self.pml_rcut, 
+                         pml_mnn=self.pml_mnn,
+                         iml_rcut=self.iml_rcut, 
+                         iml_mnn=self.iml_mnn)
         data.pos.requires_grad = True
         data.update_geo()
         data.strip_topo()
@@ -43,7 +51,7 @@ class Calculator(Calculator_base):
         force = -torch.autograd.grad(outputs=energy, 
                                     inputs=data.pos, 
                                     grad_outputs=torch.ones_like(energy),
-                                    create_graph=True,
+                                    create_graph=False,
                                     )[0]
         
         energy = energy.detach().cpu().view(-1,1).numpy()

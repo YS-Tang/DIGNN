@@ -156,6 +156,16 @@ def update_cplt_graph(basic_graph: AtomsData, store_device='cpu', pos_grad=False
         basic_graph.strip_topo()
     return basic_graph
 
+def update_cplt_batch(basic_batch: list[AtomsData], store_device='cpu') -> list[AtomsData]:
+        cplt = []
+        for b in tqdm.tqdm(basic_batch, desc='updating geo', unit='batch'):
+            c = update_cplt_graph(b,
+                                store_device=store_device, 
+                                pos_grad=False, 
+                                if_strip=True)
+            cplt.append(c)
+        return cplt
+
 
 def MonoatomicChain_check(data: Atoms):
     """

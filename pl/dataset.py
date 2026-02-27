@@ -6,7 +6,7 @@ from sklearn.model_selection import train_test_split
 from torch_geometric.loader import DataLoader
 
 from ..data.Atoms import AtomsData
-from ..data.utils import update_basic_batch, update_cplt_graph
+from ..data.utils import update_basic_batch, update_cplt_batch
 from ..utils.utils import AtomIndexMapper
 
 
@@ -95,11 +95,11 @@ class DataModule(pl.LightningDataModule):
                 self.test_batch = test_batch
         
         elif self.return_type == 'cplt':
-            self.train_batch = self._get_cplt(train_batch)
+            self.train_batch = update_cplt_batch(train_batch, self.store_device)
             if self.val_batch is not None:
-                self.val_batch = self._get_cplt(val_batch)
+                self.val_batch = update_cplt_batch(val_batch, self.store_device)
             if self.test_batch is not None:
-                self.test_batch = self._get_cplt(test_batch)
+                self.test_batch = update_cplt_batch(test_batch, self.store_device)
             
     def train_dataloader(self):
         return IterData(self.train_batch)
@@ -112,13 +112,3 @@ class DataModule(pl.LightningDataModule):
         for d in data_list:
             d.atom = self.mapper(d.atom)
         return data_list
-    
-    def _get_cplt(self, basic):
-        cplt = []
-        for b in tqdm.tqdm(basic, desc='cplt graph'):
-            c = update_cplt_graph(b,
-                                store_device=self.store_device, 
-                                pos_grad=False, 
-                                if_strip=True)
-            cplt.append(c)
-        return cplt

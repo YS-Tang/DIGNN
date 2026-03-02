@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from ..utils import RBFLayer
+from ...utils import RBFLayer
 
 class Encoder(nn.Module):
     def __init__(self, 

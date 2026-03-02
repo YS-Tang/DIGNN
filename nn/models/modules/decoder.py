@@ -2,7 +2,7 @@ import torch
 from torch import nn
 from torch_geometric.utils import scatter
 from typing import List, Optional, Tuple
-from ..utils import MLP
+from ...utils import MLP
 
 class Decoder(nn.Module):
     def __init__(self, dim: List[int], reduce_method='mean', batch_norm=False, dropout=0.0) -> None:

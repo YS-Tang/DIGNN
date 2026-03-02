@@ -8,9 +8,12 @@ from ase.calculators.calculator import Calculator as Calculator_base
 
 class Calculator(Calculator_base):
     implemented_properties = ['energy', 'forces']
-    def __init__(self, model, mapper, pml_rcut, pml_mnn, iml_rcut, iml_mnn, device='cpu', **kwargs):
+    def __init__(self, model, mapper, pml_rcut, pml_mnn, iml_rcut, iml_mnn, 
+                 compile_model: bool = False, device='cpu', **kwargs):
         super().__init__(**kwargs)
-        self.model = model
+        self.model = model.to(device)
+        if compile_model:
+            self.model = torch.compile(self.model)
         self.model.eval()
         self.mapper = mapper
         self.pml_rcut = pml_rcut

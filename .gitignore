@@ -56,6 +56,7 @@ dmypy.json
 *.ckpt
 *.safetensors
 *.bin
+*.db
 
 data/*.csv
 data/*.json

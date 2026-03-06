@@ -18,6 +18,8 @@ class TrainModule(pl.LightningModule):
                 onecycle_total_steps: int = None,
                 onecycle_final_div_factor: float = 1e+5,
                 empty_cache_every_epoch: bool = False,
+                test_prefix: str = '',
+                enable_embed_decay: bool = True,
                 ):
         super().__init__()
         self.model = model
@@ -31,6 +33,8 @@ class TrainModule(pl.LightningModule):
         self.onecycle_total_steps = onecycle_total_steps
         self.onecycle_final_div_factor = onecycle_final_div_factor
         self.empty_cache_every_epoch = empty_cache_every_epoch
+        self.test_prefix = test_prefix
+        self.enable_embed_decay = enable_embed_decay
         
         self.criterion = torch.nn.MSELoss()
         self.mae_criterion = torch.nn.L1Loss()
@@ -73,8 +77,8 @@ class TrainModule(pl.LightningModule):
         loss = self.criterion(prop.view(-1, 1), batch[self.prop].view(-1, 1))
         mae_prop = self.mae_criterion(prop.view(-1, 1), batch[self.prop].view(-1, 1))
         
-        self.log("test_loss", loss, prog_bar=True, on_epoch=True)
-        self.log("test_mae_prop", mae_prop, prog_bar=True, on_epoch=True)
+        self.log(f"{self.test_prefix}test_loss", loss, prog_bar=True, on_epoch=True)
+        self.log(f"{self.test_prefix}test_mae_prop", mae_prop, prog_bar=True, on_epoch=True)
         
         self.test_results['preds'].append(prop.view(-1, 1).detach().cpu().numpy())
         self.test_results['targets'].append(batch[self.prop].view(-1, 1).detach().cpu().numpy())
@@ -90,7 +94,24 @@ class TrainModule(pl.LightningModule):
         self.test_results['targets'] = np.concatenate(self.test_results['targets'], axis=0)
     
     def configure_optimizers(self):
-        optimizer = AdamW(self.model.parameters(),
+        if not self.enable_embed_decay:
+            decay, no_decay = set(), set()
+            for n, p in self.model.named_parameters():
+                if n.startswith('encoder.embed_atm'):
+                    no_decay.add(p)
+                else:
+                    decay.add(p)
+            
+            param_groups = [
+                {"params": list(decay), "weight_decay": self.adamw_weight_decay},
+                {"params": list(no_decay), "weight_decay": 0.0},
+            ]
+        else:
+            param_groups = [
+                {"params": list(self.parameters()), "weight_decay": self.adamw_weight_decay},
+            ]
+
+        optimizer = AdamW(param_groups,
                         lr=self.lr,
                         weight_decay=self.adamw_weight_decay,
                         betas=self.adamw_betas
@@ -215,7 +236,24 @@ class TrainModule_FF(pl.LightningModule):
         self.test_results['atom_num'] = np.concatenate(self.test_results['atom_num'], axis=0)
     
     def configure_optimizers(self):
-        optimizer = AdamW(self.model.parameters(),
+        if not self.enable_embed_decay:
+            decay, no_decay = set(), set()
+            for n, p in self.model.named_parameters():
+                if n.startswith('encoder.embed_atm'):
+                    no_decay.add(p)
+                else:
+                    decay.add(p)
+            
+            param_groups = [
+                {"params": list(decay), "weight_decay": self.adamw_weight_decay},
+                {"params": list(no_decay), "weight_decay": 0.0},
+            ]
+        else:
+            param_groups = [
+                {"params": list(self.parameters()), "weight_decay": self.adamw_weight_decay},
+            ]
+
+        optimizer = AdamW(param_groups,
                         lr=self.lr,
                         weight_decay=self.adamw_weight_decay,
                         betas=self.adamw_betas

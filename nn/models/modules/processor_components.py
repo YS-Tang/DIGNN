@@ -60,6 +60,8 @@ class LCP(nn.Module):
         super().__init__()
         self.atm_bnd_imls = atm_bnd_imls
         self.iml_node_only = iml_node_only
+        self.iml = len(atm_bnd_imls)
+        self.global_processor = None
     
     def forward(self,
                 h_atm: torch.Tensor,
@@ -71,7 +73,91 @@ class LCP(nn.Module):
             for atm_bnd_iml in self.atm_bnd_imls:
                 h_atm = atm_bnd_iml(h_atm, edge_index_bndI, h_bndI[index_bondI_map])
         else:
-            for atm_bnd_iml in self.atm_bnd_imls:
+            for atm_bnd_iml, global_net in zip(self.atm_bnd_imls, self.global_processor.global_gat):
                 h_atm, h_bndI_cplt = atm_bnd_iml(h_atm, edge_index_bndI, h_bndI[index_bondI_map])
                 h_bndI = scatter(h_bndI_cplt, index_bondI_map, dim=0, reduce='mean', dim_size=h_bndI.shape[0])
+                
+                h_atm_with_global = torch.cat([h_atm, self.global_processor.atom_global], dim=0)
+                h_atm_with_global = global_net(h_atm_with_global, self.global_processor.edge_index_global)
+                
+                h_atm = h_atm_with_global[:h_atm.size(0)]
+                self.global_processor.atom_global = h_atm_with_global[h_atm.size(0):]
+                
         return h_atm
+    
+
+from ...utils import MLP
+from typing import List
+from torch_geometric.utils import to_undirected
+from torch_geometric.nn import GATv2Conv
+
+class Global_node_GAT(nn.Module):
+    def __init__(self,
+                 channel_dim: int,
+                 gat_heads: int=4,
+                 global_node_num: int=4,
+                 proj_hid_dim: List[int]=[64, 64],
+                 layer_num: int=2,
+                 residual: bool=True):
+        super().__init__()
+        self.global_node_num = global_node_num
+        
+        self.proj_mlp = nn.Sequential(
+            MLP([1]+proj_hid_dim+[global_node_num],  act=nn.SiLU(), batch_norm=False, dropout=0),
+            nn.LayerNorm((channel_dim, global_node_num))
+        ),
+        
+        self.global_gat = nn.ModuleList([
+                GATv2Conv(in_channels=channel_dim,
+                          out_channels=channel_dim,
+                          edge_dim=None,
+                          heads=gat_heads,
+                          residual=residual,
+                          concat=False) for _ in range(layer_num)
+            ])
+    
+    def preprocess(self,
+                h_atm: torch.Tensor,       # [batch*num_atm, channel_dim]
+                atom_batch: torch.Tensor    # [batch*num_atm]
+                ) -> torch.Tensor:
+        
+        device = h_atm.device
+        batch_size = atom_batch.max() + 1
+        channel_dim = h_atm.size(1)
+        real_atom_num = h_atm.size(0)
+        num_global_per_batch = self.global_node_num
+
+        atom_global_mean = scatter(h_atm, atom_batch, dim=0, reduce='mean', dim_size=batch_size).unsqueeze(1)
+        atom_global = self.proj_mlp[0](atom_global_mean.transpose(1, 2)).transpose(1, 2)
+        atom_global = atom_global.reshape(-1, channel_dim) # [Batch * G, Dim]
+
+        atom_batch_global = torch.arange(batch_size, device=device).repeat_interleave(num_global_per_batch)
+
+        start_global_id = real_atom_num
+        global_ids = torch.arange(start_global_id, start_global_id + batch_size * num_global_per_batch, device=device)
+
+        count_real_per_batch = torch.bincount(atom_batch, minlength=batch_size)
+        max_real_in_batch = count_real_per_batch.max().item()
+
+
+        repeats_for_dst = count_real_per_batch.repeat_interleave(num_global_per_batch)
+        dst = global_ids.repeat_interleave(repeats_for_dst)
+
+        real_ids = torch.arange(real_atom_num, device=device)
+
+        sorted_real_ids = torch.arange(real_atom_num, device=device)[atom_batch.argsort()]
+        sections = sorted_real_ids.split(count_real_per_batch.tolist())
+        src = torch.cat([s.tile((num_global_per_batch,)) for s in sections])
+
+        edge_index_global = torch.stack([src, dst], dim=0)
+        
+        edge_index_global = to_undirected(edge_index_global)
+
+        # atom_with_global = torch.cat([h_atm, atom_global], dim=0)
+        # atom_batch_with_global = torch.cat([atom_batch, atom_batch_global], dim=0)
+        
+        # return atom_global, atom_batch_global, edge_index_global, real_atom_num
+        self.atom_global = atom_global
+        # self.atom_batch_global = atom_batch_global
+        self.edge_index_global = edge_index_global
+        # self.real_atom_num = real_atom_num

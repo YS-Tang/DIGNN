@@ -1,5 +1,8 @@
+import torch
 from torch import nn
 from ..utils import init_weights
+from copy import deepcopy
+from ..utils import MLP
 
 class DIGNN(nn.Module):
     def __init__(self, encoder, processor, decoder, global_processor):
@@ -8,6 +11,8 @@ class DIGNN(nn.Module):
         self.processor = processor
         self.decoder   = decoder
         self.processor.lcp.global_processor = global_processor
+        self.global_decoder = deepcopy(decoder)
+        self.output = MLP([2,16,1], act=nn.SiLU(), batch_norm=False, dropout=0)
         self.apply(init_weights)
     
     def forward(self, data):
@@ -19,10 +24,15 @@ class DIGNN(nn.Module):
         
         e_atm, e_bnd, e_ang, e_dih, e_bndI = self.encoder(x_atm, x_bnd, x_ang, x_dih, x_bndI)
         
-        self.processor.lcp.global_processor.preprocess(e_atm, atom_batch)
+        self.processor.lcp.global_processor.preprocess(e_atm, atom_batch, e_bndI, edge_index_bndI)
         p_atm = self.processor(e_atm, e_bnd, e_ang, e_dih, e_bndI, 
                                 edge_index_bnd, edge_index_ang, edge_index_dih, edge_index_bndI,
                                 index_angle_map, index_bond_map, index_dih_map, index_bondI_map
                                 )
         d_atm = self.decoder(p_atm, atom_batch)
-        return d_atm
+        # 简易处理global
+        d_global = self.global_decoder(self.processor.lcp.global_processor.atom_global,
+                                       self.processor.lcp.global_processor.atom_batch_global)
+        d = torch.cat([d_atm, d_global], dim=1)
+        out = self.output(d)
+        return out

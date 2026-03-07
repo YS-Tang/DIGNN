@@ -24,7 +24,7 @@ class DIGNN(nn.Module):
         
         e_atm, e_bnd, e_ang, e_dih, e_bndI = self.encoder(x_atm, x_bnd, x_ang, x_dih, x_bndI)
         
-        self.processor.lcp.global_processor.preprocess(e_atm, atom_batch, e_bndI, edge_index_bndI)
+        self.processor.lcp.global_processor.atom_batch = atom_batch
         p_atm = self.processor(e_atm, e_bnd, e_ang, e_dih, e_bndI, 
                                 edge_index_bnd, edge_index_ang, edge_index_dih, edge_index_bndI,
                                 index_angle_map, index_bond_map, index_dih_map, index_bondI_map

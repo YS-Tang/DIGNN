@@ -68,6 +68,7 @@ class LCP(nn.Module):
                 h_bndI: torch.Tensor,
                 edge_index_bndI: torch.Tensor,
                 index_bondI_map) -> torch.Tensor:
+        self.global_processor.preprocess(h_atm)
         """IML 层前向传播"""
         if self.iml_node_only:
             for atm_bnd_iml in self.atm_bnd_imls:
@@ -98,7 +99,7 @@ from ...convs.gcn import GatedGCN
 class Global_node_nn(nn.Module):
     def __init__(self,
                  atom_dim: int,
-                 bond_dim: int, # 可以不跟atomsdata中的bnd_dim相同，暂时先保持相同
+                 bond_dim: int, # 可以不跟atomsdata中的bnd_dim相同
                  global_node_num: int=4,
                  proj_hid_dim: List[int]=[64, 64],
                  layer_num: int=2,
@@ -106,18 +107,22 @@ class Global_node_nn(nn.Module):
         super().__init__()
         self.global_node_num = global_node_num
         self.residual = residual
+        self.atom_batch = None  # [batch*num_atm]
         
         # 数量投影
+        # 输入[batch, atom_dim, 1]，输出[batch, atom_dim, global_node_num], (1,2)经过转置
+        # 输入的1是batch内的atom池化后的结果
         self.proj_mlp_atom = nn.Sequential(
             MLP([1]+proj_hid_dim+[global_node_num],  act=nn.SiLU(), batch_norm=False, dropout=0),
             nn.LayerNorm((atom_dim, global_node_num))
-        ) # 输入[batch, atom_dim, 1]，输出[batch, atom_dim, global_node_num], (1,2)经过转置
+        ) 
         
         # 权重投影
+        # 输入[total_atom_num, atom_dim]，输出[total_atom_num, bond_dim]
         self.proj_mlp_bond = nn.Sequential(
-            MLP([bond_dim]+proj_hid_dim+[bond_dim],  act=nn.SiLU(), batch_norm=False, dropout=0),
+            MLP([atom_dim]+proj_hid_dim+[bond_dim],  act=nn.SiLU(), batch_norm=False, dropout=0),
             nn.LayerNorm(bond_dim)
-        ) # 输入[total_atom_num, bond_dim]，输出[total_atom_num, bond_dim]
+        ) 
         
         # 可以考虑传入edge
         # edge初始化由原子近邻边池化投影而来
@@ -125,6 +130,52 @@ class Global_node_nn(nn.Module):
             GatedGCN(atom_dim, bond_dim, residual=self.residual) for _ in range(layer_num)
         ])
     
+    # 用pml传递的h_atm来初始化atom_global和bond_global
+    @torch.compiler.disable    
+    def preprocess(self,
+                h_atm: torch.Tensor,       # [batch*num_atm, atom_dim]
+                ) -> torch.Tensor:
+        device = h_atm.device
+        batch_size = self.atom_batch.max() + 1
+        channel_dim = h_atm.size(1)
+        real_atom_num = h_atm.size(0)
+        num_global_per_batch = self.global_node_num
+
+        atom_global_mean = scatter(h_atm, self.atom_batch, dim=0, reduce='mean', dim_size=batch_size).unsqueeze(1)
+        atom_global = self.proj_mlp_atom(atom_global_mean.transpose(1, 2)).transpose(1, 2)
+        atom_global = atom_global.reshape(-1, channel_dim) # [Batch * G, Dim]
+
+        atom_batch_global = torch.arange(batch_size, device=device).repeat_interleave(num_global_per_batch)
+
+        start_global_id = real_atom_num
+        global_ids = torch.arange(start_global_id, start_global_id + batch_size * num_global_per_batch, device=device)
+
+        count_real_per_batch = torch.bincount(self.atom_batch, minlength=batch_size)
+        # max_real_in_batch = count_real_per_batch.max().item()
+
+
+        repeats_for_dst = count_real_per_batch.repeat_interleave(num_global_per_batch)
+        dst = global_ids.repeat_interleave(repeats_for_dst)
+
+        real_ids = torch.arange(real_atom_num, device=device)
+
+        sorted_real_ids = torch.arange(real_atom_num, device=device)[self.atom_batch.argsort()]
+        sections = sorted_real_ids.split(count_real_per_batch.tolist())
+        src = torch.cat([s.tile((num_global_per_batch,)) for s in sections])
+
+        bond_global = self.proj_mlp_bond(h_atm) # [atom_num, bond_dim]
+        bond_global = bond_global[src] # [真实虚拟投影数, bond_dim]
+        
+        edge_index_global = torch.stack([src, dst], dim=0)
+        
+        edge_index_global, bond_global = to_undirected(edge_index_global, bond_global)
+
+        self.atom_global = atom_global
+        self.atom_batch_global = atom_batch_global
+        self.edge_index_global = edge_index_global
+        self.bond_global = bond_global
+
+""" 用bondI来初始化bond_global
     @torch.compiler.disable    
     def preprocess(self,
                 h_atm: torch.Tensor,       # [batch*num_atm, atom_dim]
@@ -180,3 +231,4 @@ class Global_node_nn(nn.Module):
         self.edge_index_global = edge_index_global
         self.bond_global = bond_global
         # self.real_atom_num = real_atom_num
+"""

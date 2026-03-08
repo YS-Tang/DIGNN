@@ -222,34 +222,71 @@ class AtomsData(Data):
         ang_row, ang_col = self.angle_index_reo
         CosAng_reo = (self.BondVec_reo_uni[ang_row] * self.BondVec_reo_uni[ang_col]).sum(dim=-1, keepdim=True)
         CosAng_reo = DifferentiableClamp.apply(CosAng_reo, -1+self.EPS, 1-self.EPS)
-        self.CosAng_reo = torch.acos(CosAng_reo.squeeze(1) * self.bond2angle_AliSign)
+        self.CosAng_reo = torch.acos(CosAng_reo.squeeze(1) * self.bond2angle_AliSign) # 实际上是角度值，范围为[0, π]
         
         self.angle_batch = self.bond_batch[ang_row]
 
     
+    # def _calc_dihedral(self) -> None:
+    #     """
+    #     计算二面角特征, 暂不考虑手性
+    #     """
+    #     ang_row, ang_col = self.angle_index_reo
+    #     CrossVec_reo = torch.cross(self.BondVec_reo_uni[ang_row], self.BondVec_reo_uni[ang_col], dim=-1)
+    #     CrossVec_uni = CrossVec_reo / (torch.linalg.norm(CrossVec_reo, dim=-1, keepdim=True) + self.EPS)
+
+    #     dih_row, dih_col = self.dihedral_index_reo
+    #     DihAng_PosSignFm, DihAng_PosSignLt = Sign(self.angle_index_reo, self.dihedral_index_reo).PositionSign('all')
+
+    #     ang_fm_sign = Calc_Sign(Pre_AliSign = self.CrossAng_AliSign[dih_row],
+    #                             Pre_PosSignFm = self.CrossVec_PosSignFm[dih_row], 
+    #                             Post_PosSign = DihAng_PosSignFm)
+    #     ang_lt_sign = Calc_Sign(Pre_AliSign = self.CrossAng_AliSign[dih_col], 
+    #                             Pre_PosSignFm = self.CrossVec_PosSignFm[dih_col], 
+    #                             Post_PosSign = DihAng_PosSignLt)
+    #     dih_sign = (ang_fm_sign * ang_lt_sign * self.angle2dihedral_AliSign).long()
+        
+    #     CosDih_reo = (CrossVec_uni[dih_row] * CrossVec_uni[dih_col]).sum(dim=-1, keepdim=True)
+    #     CosDih_reo = DifferentiableClamp.apply(CosDih_reo, -1+self.EPS, 1-self.EPS)
+        
+    #     self.CosDih_reo = torch.acos(CosDih_reo.squeeze(1) * dih_sign)
+        
+    #     self.dihedral_batch = self.angle_batch[dih_row]
     def _calc_dihedral(self) -> None:
         """
-        计算二面角特征
+        计算二面角特征，考虑手性（范围：-π 到 π）
         """
         ang_row, ang_col = self.angle_index_reo
-        CrossVec_reo = torch.cross(self.BondVec_reo_uni[ang_row], self.BondVec_reo_uni[ang_col], dim=-1)
-        CrossVec_uni = CrossVec_reo / (torch.linalg.norm(CrossVec_reo, dim=-1, keepdim=True) + self.EPS)
-
         dih_row, dih_col = self.dihedral_index_reo
-        DihAng_PosSignFm, DihAng_PosSignLt = Sign(self.angle_index_reo, self.dihedral_index_reo).PositionSign('all')
 
-        ang_fm_sign = Calc_Sign(Pre_AliSign = self.CrossAng_AliSign[dih_row],
-                                Pre_PosSignFm = self.CrossVec_PosSignFm[dih_row], 
-                                Post_PosSign = DihAng_PosSignFm)
-        ang_lt_sign = Calc_Sign(Pre_AliSign = self.CrossAng_AliSign[dih_col], 
-                                Pre_PosSignFm = self.CrossVec_PosSignFm[dih_col], 
-                                Post_PosSign = DihAng_PosSignLt)
-        dih_sign = (ang_fm_sign * ang_lt_sign * self.angle2dihedral_AliSign).long()
-        
-        CosDih_reo = (CrossVec_uni[dih_row] * CrossVec_uni[dih_col]).sum(dim=-1, keepdim=True)
-        CosDih_reo = DifferentiableClamp.apply(CosDih_reo, -1+self.EPS, 1-self.EPS)
-        
-        self.CosDih_reo = torch.acos(CosDih_reo.squeeze(1) * dih_sign)
+        # 获取构成二面角的三个连续键的索引
+        # 键1: 第一个角的第一个键 (ang_row[dih_row])
+        # 键2: 两个角共享的中间键 (ang_col[dih_row])
+        # 键3: 第二个角的第二个键 (ang_col[dih_col])
+        bond1_idx = ang_row[dih_row]
+        bond2_idx = ang_col[dih_row]
+        bond3_idx = ang_col[dih_col]
+
+        # 获取归一化的键向量
+        v1 = self.BondVec_reo_uni[bond1_idx]  # 键1向量: a -> b
+        v2 = self.BondVec_reo_uni[bond2_idx]  # 键2向量: b -> c (中间键)
+        v3 = self.BondVec_reo_uni[bond3_idx]  # 键3向量: c -> d
+
+        # 计算两个平面的法向量
+        n1 = torch.cross(v1, v2, dim=-1)  # 平面1 (a-b-c) 的法向量
+        n2 = torch.cross(v2, v3, dim=-1)  # 平面2 (b-c-d) 的法向量
+
+        # 计算用于atan2的两个分量
+        # c1 = cos(theta) * |n1| * |n2|
+        c1 = (n1 * n2).sum(dim=-1)
+        # m1 是 n1 在垂直于 v2 平面上的旋转向量
+        m1 = torch.cross(n1, v2, dim=-1)
+        # c2 = sin(theta) * |n1| * |n2|
+        c2 = (m1 * n2).sum(dim=-1)
+
+        # 计算二面角（范围：-π 到 π）
+        # 注意：变量名从 CosDih_reo 改为 Dih_reo，以反映其存储的是角度值而非余弦值
+        self.CosDih_reo = torch.atan2(c2, c1) # 实际上是角度值，范围为[-π, π]
         
         self.dihedral_batch = self.angle_batch[dih_row]
         

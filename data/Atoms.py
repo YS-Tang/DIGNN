@@ -222,7 +222,7 @@ class AtomsData(Data):
         ang_row, ang_col = self.angle_index_reo
         CosAng_reo = (self.BondVec_reo_uni[ang_row] * self.BondVec_reo_uni[ang_col]).sum(dim=-1, keepdim=True)
         CosAng_reo = DifferentiableClamp.apply(CosAng_reo, -1+self.EPS, 1-self.EPS)
-        self.CosAng_reo = torch.acos(CosAng_reo.squeeze(1) * self.bond2angle_AliSign)
+        self.CosAng_reo = torch.acos(CosAng_reo.squeeze(1) * self.bond2angle_AliSign) # 非cos值， 而是真实角度
         
         self.angle_batch = self.bond_batch[ang_row]
 
@@ -249,7 +249,7 @@ class AtomsData(Data):
         CosDih_reo = (CrossVec_uni[dih_row] * CrossVec_uni[dih_col]).sum(dim=-1, keepdim=True)
         CosDih_reo = DifferentiableClamp.apply(CosDih_reo, -1+self.EPS, 1-self.EPS)
         
-        self.CosDih_reo = torch.acos(CosDih_reo.squeeze(1) * dih_sign)
+        self.CosDih_reo = torch.acos(CosDih_reo.squeeze(1) * dih_sign) # 非cos值， 而是真实角度
         
         self.dihedral_batch = self.angle_batch[dih_row]
         

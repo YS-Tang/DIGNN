@@ -52,6 +52,7 @@ class RBFLayer(nn.Module):
     def __init__(self,
                  start=0.0,
                  end=10.0,
+                 periodic=None,
                  num_gaussians=100,
                  if_decay=False
                  ):
@@ -59,17 +60,26 @@ class RBFLayer(nn.Module):
         self.start = start
         self.end = end
         self.if_decay = if_decay
+        self.period = periodic
         
         mu = torch.linspace(start, end, num_gaussians).float()
         sigma = torch.ones(num_gaussians).float()
         self.mu = torch.nn.Parameter(mu.view(-1, 1)) # 转为列向量
         # self.register_buffer("mu", mu.view(-1, 1)) # 固定mu不作为参数修改
         self.sigma = torch.nn.Parameter(sigma)  # 作为参数学习
-        
+    
+    def periodic_distance(self, x, mu):
+        diff = torch.abs(x - mu)
+        periodic_diff = torch.min(diff, self.period - diff)
+        return periodic_diff
         
     def forward(self, x):
         # 高斯 RBF 的公式: exp(-||x - mu||^2 / (2 * sigma^2))
-        gaussian = torch.exp(-torch.pow(x - self.mu.T, 2) / (2 * self.sigma ** 2))
+        if self.period is not None:
+            dist = self.periodic_distance(x, self.mu.T)
+        else:
+            dist = x - self.mu.T
+        gaussian = torch.exp(-torch.pow(dist, 2) / (2 * self.sigma ** 2))
         if self.if_decay: return gaussian * self.decay(x)
         return gaussian
     
@@ -105,7 +115,7 @@ def init_weights(module: nn.Module, init_type: str = 'xavier', gain: float = 1.0
         
         # 偏置初始化为 0
         if module.bias is not None:
-            nn.init.zeros_(module.bias)
+            nn.init.uniform_(module.bias, -0.01, 0.01)
     
     elif isinstance(module, nn.LayerNorm):
         # LayerNorm 保持默认初始化（gamma=1, beta=0）

@@ -18,7 +18,7 @@ class Encoder(nn.Module):
         self.embed_atm = nn.Embedding(num_species, atom_dim, padding_idx=0)
         self.embed_bnd = RBFLayer(start=0.0, end=pml_rcut, num_gaussians=bond_dim, if_decay=True)
         self.embed_ang = RBFLayer(start=0.0, end=torch.pi, num_gaussians=ang_dim, if_decay=False)
-        self.embed_dih = RBFLayer(start=-torch.pi, end=torch.pi, num_gaussians=dih_dim, if_decay=False)
+        self.embed_dih = RBFLayer(start=0, end=torch.pi, num_gaussians=dih_dim, if_decay=False, period=None) # 暂不考虑手性
         
         self.embed_bnd2 = RBFLayer(start=0.0, end=iml_rcut, num_gaussians=bondI_dim, if_decay=True)
         

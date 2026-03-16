@@ -94,24 +94,34 @@ class TrainModule(pl.LightningModule):
         self.test_results['targets'] = np.concatenate(self.test_results['targets'], axis=0)
     
     def configure_optimizers(self):
-        if not self.enable_embed_decay:
-            decay, no_decay = set(), set()
-            for n, p in self.model.named_parameters():
-                if n.startswith('encoder.embed_atm'):
-                    no_decay.add(p)
-                else:
-                    decay.add(p)
+        # if not self.enable_embed_decay:
+        #     decay, no_decay = set(), set()
+        #     for n, p in self.model.named_parameters():
+        #         if n.startswith('encoder.embed_atm'):
+        #             no_decay.add(p)
+        #         else:
+        #             decay.add(p)
             
-            param_groups = [
-                {"params": list(decay), "weight_decay": self.adamw_weight_decay},
-                {"params": list(no_decay), "weight_decay": 0.0},
-            ]
-        else:
-            param_groups = [
-                {"params": list(self.parameters()), "weight_decay": self.adamw_weight_decay},
-            ]
+        #     param_groups = [
+        #         {"params": list(decay), "weight_decay": self.adamw_weight_decay},
+        #         {"params": list(no_decay), "weight_decay": 0.0},
+        #     ]
+        # else:
+        #     param_groups = [
+        #         {"params": list(self.parameters()), "weight_decay": self.adamw_weight_decay},
+        #     ]
+        
+        lr_1x, lr_01x = set(), set()
+        for n, p in self.model.named_parameters():
+            if ("aggr" in n) or ("borad" in n):
+                lr_01x.add(p)
+            else:
+                lr_1x.add(p)
+        
+        params_groups = [{"params": list(lr_1x), "lr_scale": 1.0},
+                         {"params": list(lr_01x), "lr_scale": 0.1}]
 
-        optimizer = AdamW(param_groups,
+        optimizer = AdamW(params_groups,
                         lr=self.lr,
                         weight_decay=self.adamw_weight_decay,
                         betas=self.adamw_betas
@@ -126,6 +136,11 @@ class TrainModule(pl.LightningModule):
         return {"optimizer": optimizer,
                 "lr_scheduler": {"scheduler": scheduler, "interval": "step",},
                 }
+    
+    def on_train_batch_end(self, outputs, batch, batch_idx):
+        for param_group in self.optimizers().param_groups:
+            param_group['lr'] *= param_group['lr_scale']
+            self.log(f"lr_scale_{param_group['lr_scale']}", param_group['lr'], prog_bar=True)
 
 
 class TrainModule_FF(pl.LightningModule):

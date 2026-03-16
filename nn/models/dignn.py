@@ -21,7 +21,9 @@ class DIGNN(nn.Module):
         index_angle_map, index_bond_map, index_dih_map, index_bondI_map = data.AngReo4Ang, data.BndReo4Bnd, data.DihReo4Dih, data.BndReo4BndI
         
         atom_batch = getattr(data, 'atom_batch', None)
-        
+
+        self.processor.lcp.global_processor.preprocess_calc_weights(data)
+
         e_atm, e_bnd, e_ang, e_dih, e_bndI = self.encoder(x_atm, x_bnd, x_ang, x_dih, x_bndI)
         
         self.processor.lcp.global_processor.atom_batch = atom_batch

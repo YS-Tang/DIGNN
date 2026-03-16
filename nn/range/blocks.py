@@ -117,7 +117,7 @@ class AggregationBlock(torch.nn.Module):
             * self.activation((Q + K + E).view(-1, self.n_heads, self.hidden_channels)),
             dim=2,
         )
-        weights = scatter_softmax(weights, edge_indices[1], dim=0)
+        weights = scatter_softmax(weights, edge_indices[1], dim=0, dim_size=receivers.shape[0])
         weights = weights.unsqueeze(-1)
 
         V = V.view(-1, self.n_heads, self.hidden_channels)
@@ -258,7 +258,7 @@ class BroadcastBlock(torch.nn.Module):
             * self.activation((Q + K + E).view(-1, self.n_heads, self.hidden_channels)),
             dim=2,
         )
-        weights = scatter_softmax(weights, edge_indices[1], dim=0)
+        weights = scatter_softmax(weights, edge_indices[1], dim=0, dim_size=receivers.shape[0])
 
         weights = weights.unsqueeze(-1)
 

@@ -98,11 +98,12 @@ class LCP(nn.Module):
         return h_atm
     
 
-from ...utils import MLP
+from ...utils import MLP, RBFLayer
 from typing import List
 from torch_geometric.utils import to_undirected, add_self_loops
 from ...range.blocks import AggregationBlock, BroadcastBlock
 from ...range.regularization import LinearReg
+from ...range.utils import calc_weights, calc_weights_pbc
 
 class Global_node_nn(nn.Module):
     def __init__(self,
@@ -112,7 +113,8 @@ class Global_node_nn(nn.Module):
                  proj_hid_dim: List[int]=[64, 64],
                  layer_num: int=2,
                  residual: bool=True,
-                 global_heads: int=4):
+                 global_heads: int=4,
+                 max_atoms_size: float=20.0):
         super().__init__()
         self.atom_dim = atom_dim
         self.bond_dim = bond_dim
@@ -122,17 +124,19 @@ class Global_node_nn(nn.Module):
         # 数量投影
         # 输入[batch, atom_dim, 1]，输出[batch, atom_dim, global_node_num], (1,2)经过转置
         # 输入的1是batch内的atom池化后的结果
-        self.proj_mlp_atom = nn.Sequential(
-            MLP([1]+proj_hid_dim+[global_node_num],  act=nn.SiLU(), batch_norm=False, dropout=0),
-            nn.LayerNorm((atom_dim, global_node_num))
-        ) 
+        # self.proj_mlp_atom = nn.Sequential(
+        #     MLP([1]+proj_hid_dim+[global_node_num],  act=nn.SiLU(), batch_norm=False, dropout=0),
+        #     nn.LayerNorm((atom_dim, global_node_num))
+        # ) 
+        self.proj_mlp_atom = nn.Embedding(global_node_num, atom_dim)
         
         # 权重投影
         # 输入[total_atom_num, atom_dim]，输出[total_atom_num, bond_dim]
-        self.proj_mlp_bond = nn.Sequential(
-            MLP([atom_dim]+proj_hid_dim+[bond_dim],  act=nn.SiLU(), batch_norm=False, dropout=0),
-            nn.LayerNorm(bond_dim)
-        ) 
+        # self.proj_mlp_bond = nn.Sequential(
+        #     MLP([atom_dim]+proj_hid_dim+[bond_dim],  act=nn.SiLU(), batch_norm=False, dropout=0),
+        #     nn.LayerNorm(bond_dim)
+        # ) 
+        self.proj_mlp_bond = RBFLayer(start=0.0, end=max_atoms_size, num_gaussians=bond_dim, if_decay=True)
         
         # 可以考虑传入edge
         # edge初始化由原子近邻边池化投影而来
@@ -141,6 +145,7 @@ class Global_node_nn(nn.Module):
                              out_channels=atom_dim, 
                              n_heads=global_heads,
                              basis_dim=bond_dim,
+                             activation=torch.nn.Tanh(),
                              ) for _ in range(layer_num)
         ])
         for aggr in self.aggr:
@@ -151,6 +156,7 @@ class Global_node_nn(nn.Module):
                              out_channels=atom_dim, 
                              n_heads=global_heads,
                              basis_dim=bond_dim,
+                             activation=torch.nn.Tanh(),
                              ) for _ in range(layer_num)
         ])
         for broad in self.broad:
@@ -171,9 +177,10 @@ class Global_node_nn(nn.Module):
         num_global_per_batch = self.global_node_num
 
         # 计算atom_global和atom_batch_global
-        atom_global_mean = scatter(h_atm, self.atom_batch, dim=0, reduce='mean', dim_size=batch_size).unsqueeze(1)
-        atom_global = self.proj_mlp_atom(atom_global_mean.transpose(1, 2)).transpose(1, 2)
-        self.atom_global = atom_global.reshape(-1, channel_dim) # [Batch * G, Dim]
+        # atom_global_mean = scatter(h_atm, self.atom_batch, dim=0, reduce='mean', dim_size=batch_size).unsqueeze(1)
+        # atom_global = self.proj_mlp_atom(atom_global_mean.transpose(1, 2)).transpose(1, 2)
+        # self.atom_global = atom_global.reshape(-1, channel_dim) # [Batch * G, Dim]
+        self.atom_global = self.proj_mlp_atom(torch.arange(self.global_node_num, device=device).repeat(batch_size))
 
         self.atom_batch_global = torch.arange(batch_size, device=device).repeat_interleave(num_global_per_batch)
 
@@ -192,15 +199,16 @@ class Global_node_nn(nn.Module):
         count_real_per_batch = torch.bincount(self.atom_batch, minlength=batch_size)
 
         repeats_for_dst = count_real_per_batch.repeat_interleave(num_global_per_batch)
-        dst = global_ids.repeat_interleave(repeats_for_dst)
+        dst = global_ids.repeat_interleave(repeats_for_dst) # [0,0,0,1,1,1,2]
 
 
         sorted_real_ids = torch.arange(real_atom_num, device=device)[self.atom_batch.argsort()]
         sections = sorted_real_ids.split(count_real_per_batch.tolist())
-        src = torch.cat([s.tile((num_global_per_batch,)) for s in sections])
+        src = torch.cat([s.tile((num_global_per_batch,)) for s in sections]) #[0,1,2,0,1,2,0]
 
-        bond_global = self.proj_mlp_bond(h_atm) # [atom_num, bond_dim]
-        bond_global = bond_global[src] # [真实虚拟投影数, bond_dim]
+        # bond_global = self.proj_mlp_bond(h_atm) # [atom_num, bond_dim]
+        # bond_global = bond_global[src] # [真实虚拟投影数, bond_dim]
+        bond_global = self.proj_mlp_bond(self.bond_weights.unsqueeze(1)).repeat(num_global_per_batch, 1)
         
         self.real2virt_edge_index = torch.stack([src, dst], dim=0)
         self.real2virt_bond = bond_global
@@ -219,3 +227,10 @@ class Global_node_nn(nn.Module):
         self.virt2real_bond = torch.cat([self.real2virt_bond, torch.zeros(real_atom_num, self.bond_dim, device=device)], dim=0)
         
         self.reg_weights = self.linreg(torch.tensor([real_atom_num], device=device))
+    
+    @torch.compiler.disable
+    def preprocess_calc_weights(self, data):
+        if torch.all(torch.as_tensor(data.if_pbc)):
+            self.bond_weights = calc_weights_pbc(data)
+        else:
+            self.bond_weights = calc_weights(data)

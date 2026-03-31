@@ -49,7 +49,7 @@ class TrainModule(pl.LightningModule):
         prop = self(batch) # cplt
         loss = self.criterion(prop.view(-1, 1), batch[self.prop].view(-1, 1))
         
-        self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=True)
+        self.log("train_loss", loss, prog_bar=True, on_step=False, on_epoch=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -111,15 +111,15 @@ class TrainModule(pl.LightningModule):
         #         {"params": list(self.parameters()), "weight_decay": self.adamw_weight_decay},
         #     ]
         
-        lr_1x, lr_01x = set(), set()
+        lr_1x, lr_02x = set(), set()
         for n, p in self.model.named_parameters():
-            if ("aggr" in n) or ("borad" in n):
-                lr_01x.add(p)
+            if 'global_processor' in n: #("aggr" in n) or ("borad" in n):
+                lr_02x.add(p)
             else:
                 lr_1x.add(p)
         
         params_groups = [{"params": list(lr_1x), "lr_scale": 1.0},
-                         {"params": list(lr_01x), "lr_scale": 0.1}]
+                         {"params": list(lr_02x), "lr_scale": 0.6}]
 
         optimizer = AdamW(params_groups,
                         lr=self.lr,
@@ -137,10 +137,10 @@ class TrainModule(pl.LightningModule):
                 "lr_scheduler": {"scheduler": scheduler, "interval": "step",},
                 }
     
-    def on_train_batch_end(self, outputs, batch, batch_idx):
-        for param_group in self.optimizers().param_groups:
-            param_group['lr'] *= param_group['lr_scale']
-            self.log(f"lr_scale_{param_group['lr_scale']}", param_group['lr'], prog_bar=True)
+    def on_before_optimizer_step(self, optimizer):
+        for param_group in optimizer.param_groups:
+            param_group["lr"] *= param_group["lr_scale"]
+            # self.log(f"lr_scale_{param_group['lr_scale']}", param_group['lr'], prog_bar=True)
 
 
 class TrainModule_FF(pl.LightningModule):
@@ -159,6 +159,7 @@ class TrainModule_FF(pl.LightningModule):
         super().__init__()
         self.model = model
         if compile_model:
+            # 由于compile与create_graph功能冲突，训练时不做compile。推理时可以开启
             self.model = torch.compile(self.model)
         self.lr = lr
         self.adamw_weight_decay = adamw_weight_decay
@@ -185,14 +186,16 @@ class TrainModule_FF(pl.LightningModule):
                                 if_strip=True
                                 )
         energy = self.model(cplt)
+        # retain_graph保留计算图，create_graph为一阶导再创建计算图。训练力时开启，测试推理时关闭
         force = -torch.autograd.grad(outputs=energy,
                                     inputs=cplt.pos,
                                     grad_outputs=torch.ones_like(energy),
-                                    create_graph=True,
-                                    retain_graph=True,
+                                    create_graph=self.training,
+                                    retain_graph=self.training,
                                     )[0]
         return energy, force
 
+    
     def training_step(self, batch, batch_idx):        
         energy, force = self(batch)
         
@@ -251,24 +254,24 @@ class TrainModule_FF(pl.LightningModule):
         self.test_results['atom_num'] = np.concatenate(self.test_results['atom_num'], axis=0)
     
     def configure_optimizers(self):
-        if not self.enable_embed_decay:
-            decay, no_decay = set(), set()
-            for n, p in self.model.named_parameters():
-                if n.startswith('encoder.embed_atm'):
-                    no_decay.add(p)
-                else:
-                    decay.add(p)
+        # if not self.enable_embed_decay:
+        #     decay, no_decay = set(), set()
+        #     for n, p in self.model.named_parameters():
+        #         if n.startswith('encoder.embed_atm'):
+        #             no_decay.add(p)
+        #         else:
+        #             decay.add(p)
             
-            param_groups = [
-                {"params": list(decay), "weight_decay": self.adamw_weight_decay},
-                {"params": list(no_decay), "weight_decay": 0.0},
-            ]
-        else:
-            param_groups = [
-                {"params": list(self.parameters()), "weight_decay": self.adamw_weight_decay},
-            ]
+        #     param_groups = [
+        #         {"params": list(decay), "weight_decay": self.adamw_weight_decay},
+        #         {"params": list(no_decay), "weight_decay": 0.0},
+        #     ]
+        # else:
+        #     param_groups = [
+        #         {"params": list(self.parameters()), "weight_decay": self.adamw_weight_decay},
+        #     ]
 
-        optimizer = AdamW(param_groups,
+        optimizer = AdamW(self.model.parameters(),
                         lr=self.lr,
                         weight_decay=self.adamw_weight_decay,
                         betas=self.adamw_betas

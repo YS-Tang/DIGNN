@@ -12,7 +12,7 @@ class DIGNN(nn.Module):
         self.decoder   = decoder
         self.processor.lcp.global_processor = global_processor
         self.global_decoder = deepcopy(decoder)
-        self.output = MLP([2,16,1], act=nn.SiLU(), batch_norm=False, dropout=0)
+        self.output = MLP([128,64,1], act=nn.SiLU(), batch_norm=False, dropout=0)
         self.apply(init_weights)
     
     def forward(self, data):

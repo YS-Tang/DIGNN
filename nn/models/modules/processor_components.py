@@ -86,14 +86,14 @@ class LCP(nn.Module):
                                                         self.global_processor.atom_global, 
                                                         self.global_processor.real2virt_edge_index,
                                                         self.global_processor.real2virt_bond,
-                                                        )
+                                                        ) + self.global_processor.atom_global # 增加残差
                 h_atm = broad(self.global_processor.atom_global, 
                               h_atm, 
                               h_atm,
                               self.global_processor.virt2real_edge_index,
                               self.global_processor.virt2real_bond,
                               self.global_processor.reg_weights,
-                              )
+                              ).to(h_atm.dtype) + h_atm # 增加残差
                 
         return h_atm
     

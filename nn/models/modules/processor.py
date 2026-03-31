@@ -44,23 +44,23 @@ class BaseProcessor(ABC, nn.Module):
         """初始化特征变换网络"""
         self.atm_nn = nn.Sequential(
             MLP([atom_dim]*init_nn_layer, act=nn.SiLU(), batch_norm=False, dropout=self.dropout),
-            nn.LayerNorm(atom_dim)
+            # nn.LayerNorm(atom_dim)
         )
         self.bnd_nn = nn.Sequential(
             MLP([bond_dim]*init_nn_layer, act=nn.SiLU(), batch_norm=False, dropout=self.dropout),
-            nn.LayerNorm(bond_dim)
+            # nn.LayerNorm(bond_dim)
         )
         self.ang_nn = nn.Sequential(
             MLP([ang_dim]*init_nn_layer, act=nn.SiLU(), batch_norm=False, dropout=self.dropout),
-            nn.LayerNorm(ang_dim)
+            # nn.LayerNorm(ang_dim)
         )
         self.dih_nn = nn.Sequential(
             MLP([dih_dim]*init_nn_layer, act=nn.SiLU(), batch_norm=False, dropout=self.dropout),
-            nn.LayerNorm(dih_dim)
+            # nn.LayerNorm(dih_dim)
         )
         self.bndI_nn = nn.Sequential(
             MLP([bondI_dim]*init_nn_layer, act=nn.SiLU(), batch_norm=False, dropout=self.dropout),
-            nn.LayerNorm(bondI_dim)
+            # nn.LayerNorm(bondI_dim)
         )
     
     def _init_processor_components(self):

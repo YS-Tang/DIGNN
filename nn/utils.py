@@ -52,7 +52,7 @@ class RBFLayer(nn.Module):
     def __init__(self,
                  start=0.0,
                  end=10.0,
-                 periodic=None,
+                 period=None,
                  num_gaussians=100,
                  if_decay=False
                  ):
@@ -60,7 +60,7 @@ class RBFLayer(nn.Module):
         self.start = start
         self.end = end
         self.if_decay = if_decay
-        self.period = periodic
+        self.period = period
         
         mu = torch.linspace(start, end, num_gaussians).float()
         sigma = torch.ones(num_gaussians).float()

@@ -1,11 +1,13 @@
 import pytorch_lightning as pl
 import torch
+from torch import nn
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import OneCycleLR
 import numpy as np
 
 from ..nn.models.dignn import DIGNN
 from ..data.utils import update_cplt_graph
+from ..utils.feature_collect import FeatureCollector
 
 class TrainModule(pl.LightningModule):
     def __init__(self,
@@ -57,10 +59,6 @@ class TrainModule(pl.LightningModule):
         prop = self(batch)
         loss = self.criterion(prop.view(-1, 1), batch[self.prop].view(-1, 1))
         mae_prop = self.mae_criterion(prop.view(-1, 1), batch[self.prop].view(-1, 1))
-        # cplt = batch#.to(self.device)
-        prop = self(batch)
-        loss = self.criterion(prop.view(-1, 1), batch[self.prop].view(-1, 1))
-        mae_prop = self.mae_criterion(prop.view(-1, 1), batch[self.prop].view(-1, 1))
         
         self.log("val_loss", loss, prog_bar=True, on_epoch=True)
         self.log("val_mae_prop", mae_prop, prog_bar=True, on_epoch=True)
@@ -68,10 +66,6 @@ class TrainModule(pl.LightningModule):
         return {"val_loss": loss, "val_mae_prop": mae_prop}
 
     def test_step(self, batch, batch_idx):
-        # cplt = batch#.to(self.device)
-        prop = self(batch)
-        loss = self.criterion(prop.view(-1, 1), batch[self.prop].view(-1, 1))
-        mae_prop = self.mae_criterion(prop.view(-1, 1), batch[self.prop].view(-1, 1))
         # cplt = batch#.to(self.device)
         prop = self(batch)
         loss = self.criterion(prop.view(-1, 1), batch[self.prop].view(-1, 1))
@@ -127,6 +121,20 @@ class TrainModule(pl.LightningModule):
                 "lr_scheduler": {"scheduler": scheduler, "interval": "step",},
                 }
 
+    @torch.no_grad()
+    def extract_features(self, dataloader, hook_module: nn.Module):
+        """返回 (features, labels) 两个 numpy 数组"""
+        collector = FeatureCollector()
+        collector.register_hook(hook_module)
+
+        for batch in dataloader:
+            batch = self.transfer_batch_to_device(batch, self.device, dataloader_idx=0)
+            _ = self(batch)
+            collector.collect_label(batch[self.prop])
+            
+        collector.remove_hook()
+
+        return collector.get_features(), collector.get_labels()
 
 class TrainModule_FF(pl.LightningModule):
     def __init__(self,
@@ -140,6 +148,8 @@ class TrainModule_FF(pl.LightningModule):
                 onecycle_total_steps: int = None,
                 onecycle_final_div_factor: float = 1e+5,
                 empty_cache_every_epoch: bool = False,
+                test_prefix: str = '',
+                enable_embed_decay: bool = True,
                 ):
         super().__init__()
         self.model = model
@@ -153,6 +163,7 @@ class TrainModule_FF(pl.LightningModule):
         self.onecycle_total_steps = onecycle_total_steps
         self.onecycle_final_div_factor = onecycle_final_div_factor
         self.empty_cache_every_epoch = empty_cache_every_epoch
+        self.enable_embed_decay = enable_embed_decay
         
         self.criterion = torch.nn.MSELoss()
         self.mae_criterion = torch.nn.L1Loss()
@@ -268,3 +279,18 @@ class TrainModule_FF(pl.LightningModule):
         return {"optimizer": optimizer,
                 "lr_scheduler": {"scheduler": scheduler, "interval": "step",},
                 }
+    
+    @torch.no_grad()
+    def extract_features(self, dataloader, hook_module: nn.Module):
+        """返回 (features, labels) 两个 numpy 数组"""
+        collector = FeatureCollector()
+        collector.register_hook(hook_module)
+
+        for batch in dataloader:
+            batch = self.transfer_batch_to_device(batch, self.device, dataloader_idx=0)
+            _ = self(batch)
+            collector.collect_label(batch[self.prop])
+            
+        collector.remove_hook()
+
+        return collector.get_features(), collector.get_labels()

@@ -12,7 +12,7 @@ def _error_caculation(target, pred, weight=None):
     return mae, pcc, r2
 
 # 旧版density, 图像更美观
-def density_v1(x,y,xmin=None,xmax=None):
+def _density_v1(x,y,xmin=None,xmax=None):
     if xmin is not None:
         mask = x>=xmin
         x,y = x[mask],y[mask]
@@ -24,7 +24,7 @@ def density_v1(x,y,xmin=None,xmax=None):
     z = gaussian_kde(xy)(xy)
     return x, y, z
 
-def density(x, y, xmin=None, xmax=None, bins=100):
+def _density_v2(x, y, xmin=None, xmax=None, bins=100):
     if xmin is not None:
         mask = x >= xmin
         x, y = x[mask], y[mask]
@@ -44,7 +44,7 @@ def plot_comparison(target, pred, plot_range=None, colorbar_range=None, atom_num
         plot_range = (np.minimum(np.min(target), np.min(pred)), np.maximum(np.max(target), np.max(pred)))
     x_min, x_max = plot_range
         
-    x,y,z = density(target, pred, x_min, x_max)
+    x,y,z = _density_v2(target, pred, x_min, x_max)
     
     if colorbar_range is not None:
         min_mask = z < colorbar_range[0]

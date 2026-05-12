@@ -4,20 +4,29 @@ from torch_geometric.utils import scatter
 from typing import List, Optional, Tuple
 from ...utils import MLP
 
+class PoolingModule(nn.Module):
+    def __init__(self, reduce_method='mean'):
+        super().__init__()
+        self.reduce_method = reduce_method
+
+    def forward(self, h_atm, atm_batch=None):
+        if atm_batch is not None:
+            h_atm_pooled = scatter(h_atm, atm_batch, dim=0, 
+                                   reduce=self.reduce_method, dim_size=atm_batch.unique().numel())
+            return h_atm_pooled
+        else:
+            return h_atm.mean(dim=0)
+
 class Decoder(nn.Module):
     def __init__(self, dim: List[int], reduce_method='mean', batch_norm=False, dropout=0.0) -> None:
         # 如果训练集的label是每原子, 则建议reduced_method使用mean. 如果是总值, 可使用sum
         super().__init__()
         self.dim = dim
+        self.pooling = PoolingModule(reduce_method=reduce_method)
         self.decoder = MLP(dim, act=nn.SiLU(), batch_norm=batch_norm, dropout=dropout)
-        self.reduce_method = reduce_method
 
     def forward(self, h_atm, atm_batch=None):
-        if atm_batch is not None:
-            h_atm_pooled = scatter(h_atm, atm_batch, dim=0, reduce=self.reduce_method, dim_size=atm_batch.unique().numel())
-            h_pooled = h_atm_pooled
-        else:
-            h_pooled = h_atm.mean(dim=0)
+        h_pooled = self.pooling(h_atm, atm_batch)
         return self.decoder(h_pooled)
 
 

@@ -1,4 +1,4 @@
 from .comparison import plot_comparison
-from .tsne import plot_tsne
+from .feature_viz import plot_tsne, plot_umap
 
-__all__ = ['plot_comparison', 'plot_tsne']
+__all__ = ['plot_comparison', 'plot_tsne', 'plot_umap']

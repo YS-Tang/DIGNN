@@ -122,9 +122,11 @@ class TrainModule(pl.LightningModule):
                 }
 
     @torch.no_grad()
-    def extract_features(self, dataloader, hook_module: nn.Module):
+    def extract_features(self, dataloader, hook_module: nn.Module=None):
         """返回 (features, labels) 两个 numpy 数组"""
         collector = FeatureCollector()
+        if hook_module is None: hook_module = self.model.decoder.pooling # 默认提取池化层的特征
+        else: hook_module = hook_module
         collector.register_hook(hook_module)
 
         for batch in dataloader:
@@ -281,9 +283,11 @@ class TrainModule_FF(pl.LightningModule):
                 }
     
     @torch.no_grad()
-    def extract_features(self, dataloader, hook_module: nn.Module):
+    def extract_features(self, dataloader, hook_module: nn.Module=None):
         """返回 (features, labels) 两个 numpy 数组"""
         collector = FeatureCollector()
+        if hook_module is None: hook_module = self.model.decoder.pooling # 默认提取池化层的特征
+        else: hook_module = hook_module
         collector.register_hook(hook_module)
 
         for batch in dataloader:

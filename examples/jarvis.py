@@ -1,13 +1,13 @@
 import os
-device = "cuda"
+device = "cuda:0"
 os.environ["DIGNN_ENV"] = device
 
 import sys
 sys.path.append(r'/home/user/tys/DIGNN')
 
 from DIGNN.data import ase2AtomsData, AtomsData
-from DIGNN.utils import AtomIndexMapper, plot_comparison
-from DIGNN.pl import DataModule, TrainModule_FF, TrainModule
+from DIGNN.utils import AtomIndexMapper
+from DIGNN.pl import DataModule, TrainModule
 from DIGNN.nn import models as dgm
 
 import time
@@ -18,8 +18,11 @@ from ase.atoms import Atoms
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 
-hyperparams = {"pml_rcut": 5.0, "pml_mnn": 12, "iml_rcut": 10.0, "iml_mnn": 24}
-DIGNN_feat_dim = {'atom_dim': 256, 'bond_dim': 256, 'ang_dim': 128, 'dih_dim': 64}
+HP_atomsdata = {"pml_rcut": 5.0, "pml_mnn": 12, "iml_rcut": 10.0, "iml_mnn": 24} # HP指hyperparams
+HP_feat_dim = {'atom_dim': 512, 'bond_dim': 512, 'ang_dim': 256, 'dih_dim': 128}
+HP_nn = {'init': 1, 'pml': 4, 'iml': 8, 'decoder': [64,1], 'pooling': 'mean'}
+HP_train = {'batch_size': 32, 'max_epochs': 300, 'lr': 1e-2, 'adamw_weight_decay': 1e-2,
+            'adamw_betas': (0.9, 0.999), '1cycle_final_div_factor': 1e+5, 'gradient_clip_val': 1.0}
 
 def generate_Graphs_from_jarvis(file_path:str, property:str, r_cut:float) -> list[AtomsData]:
     """
@@ -30,7 +33,9 @@ def generate_Graphs_from_jarvis(file_path:str, property:str, r_cut:float) -> lis
     mask = jarvis[property].notna()
     jarvis = jarvis[mask]
 
+
     basic_graphs = []
+    special_atoms = []
     start_time = time.time()
     
     for i,mol in enumerate(jarvis.iloc):
@@ -42,6 +47,7 @@ def generate_Graphs_from_jarvis(file_path:str, property:str, r_cut:float) -> lis
         try:
             data = ase2AtomsData(atoms, check_rcut=r_cut, properties=[property])
         except:
+            special_atoms.append(atoms)
             continue
         basic_graphs.append(data)
 
@@ -49,9 +55,17 @@ def generate_Graphs_from_jarvis(file_path:str, property:str, r_cut:float) -> lis
             print(f'sample:{i},time_cost:{time.time() - start_time}')
             start_time = time.time()
     
-    return basic_graphs
+    special_graphs = []
+    for atoms in special_atoms:
+        try:
+            data = ase2AtomsData(atoms, check_rcut=22, properties=[property]) # 对于JARVIS的孤立体系也足够, 暂时不用
+        except:
+            continue
+        special_graphs.append(data)
+    
+    return basic_graphs, special_graphs
 
-property = 'max_efg'
+property = 'mbj_bandgap'
 """
 ['jid', 'spg_number', 'spg_symbol', 'formula',
         'formation_energy_peratom', 'func', 'optb88vdw_bandgap', 'atoms',
@@ -69,51 +83,58 @@ property = 'max_efg'
         'poisson', 'raw_files', 'nat', 'bulk_modulus_kv', 'shear_modulus_gv',
         'mbj_bandgap', 'hse_gap', 'reference', 'search']
 """
-atomsdata = generate_Graphs_from_jarvis(r'data/jdft_3d-8-18-2021.json',
-                                        property=property, r_cut=hyperparams['pml_rcut'])
+atomsdata, special_atomsdata = generate_Graphs_from_jarvis(r'jarvis/data/jdft_3d-8-18-2021.json',
+                                         property=property, r_cut=HP_atomsdata['pml_rcut'])
 
 data = DataModule(atomsdata,
-                    **hyperparams,
+                    **HP_atomsdata,
                     test_size=0.1, val_size=0.1,
-                    batch_size=40, num_workers=-2, store_device='cpu',
+                    batch_size=HP_train['batch_size'], num_workers=-2, store_device='cpu',
                     mapper=AtomIndexMapper(),
                     return_type='cplt',
                     )
 data.setup()
 
+# special_data = DataModule(special_atomsdata,
+#                     **{"pml_rcut": 22.0, "pml_mnn": 12, "iml_rcut": 22.0, "iml_mnn": 24},
+#                     test_size=0, val_size=0.1,
+#                     batch_size=40, num_workers=-2, store_device='cpu',
+#                     mapper=data.mapper,
+#                     return_type='cplt',
+#                     )
+# special_data.setup()
+
+# data.train_batch += special_data.train_batch
+
 
 model = dgm.DIGNN(encoder=dgm.Encoder(num_species=data.mapper.num_embeddings,
-                                            **DIGNN_feat_dim,
-                                            pml_rcut=hyperparams["pml_rcut"]+0.2,
-                                            bondI_dim=DIGNN_feat_dim['bond_dim'],
-                                            iml_rcut=hyperparams["iml_rcut"]+0.2),
-                processor=dgm.GCN_Processor(**DIGNN_feat_dim,
-                                            pml=4,
-                                            iml=6,
+                                            **HP_feat_dim,
+                                            pml_rcut=HP_atomsdata["pml_rcut"]+0.2,
+                                            bondI_dim=HP_feat_dim['bond_dim'],
+                                            iml_rcut=HP_atomsdata["iml_rcut"]+0.2),
+                processor=dgm.GCN_Processor(**HP_feat_dim,
+                                            pml=HP_nn['pml'],
+                                            iml=HP_nn['iml'],
                                             residual=True,
                                             dropout=0.0,
-                                            bondI_dim=DIGNN_feat_dim['bond_dim'],
-                                            init_nn_layer=1,
+                                            bondI_dim=HP_feat_dim['bond_dim'],
+                                            init_nn_layer=HP_nn['init'],
                                             ), 
-                decoder=dgm.Decoder(dim=[DIGNN_feat_dim['atom_dim'],128,1], 
-                                    reduce_method='mean', 
+                decoder=dgm.Decoder(dim=[HP_feat_dim['atom_dim']] + HP_nn['decoder'],
+                                    reduce_method=HP_nn['pooling'],
                                     dropout=0.0),
                 ).to(device)
                 
 from pytorch_lightning.loggers import TensorBoardLogger
-tb_logger = TensorBoardLogger("tb_logs", name='max_efg')
-tb_logger.log_hyperparams({**hyperparams, 
-                           **DIGNN_feat_dim, 
-                            'n_layer':(4,6),
-                            'decoder':(128,1),  
-                            'init_nn_layer':1,
-                            'epochs': 300,
-                            'weight_decay': 1e-4,
-                            'final_div_factor': 1e+4,
-                            'lr': 1e-3,
+tb_logger = TensorBoardLogger("tb_logs", name='bandgap_mbj')
+tb_logger.log_hyperparams({**HP_atomsdata, 
+                           **HP_feat_dim, 
+                            'n_layer':(HP_nn['pml'], HP_nn['iml']),
+                            'decoder':HP_nn['decoder'],  
+                            'init_nn_layer':HP_nn['init'],
+                            'pooling':HP_nn['pooling'],
+                            **HP_train,
                             })
-
-max_epoch = 300
 
 checkpoint_callback = ModelCheckpoint(
     monitor='val_mae_prop',
@@ -126,26 +147,29 @@ checkpoint_callback = ModelCheckpoint(
 
 train_module = TrainModule(model, 
                            compile_model=True,
-                           lr=1e-3,
+                           lr=HP_train['lr'],
                            prop=property,
-                           adamw_weight_decay=1e-4,
-                           adamw_betas=(0.9, 0.999),
-                           onecycle_total_steps=max_epoch*len(data.train_dataloader()), 
-                           onecycle_final_div_factor=1e+4,
+                           adamw_weight_decay=HP_train['adamw_weight_decay'],
+                           adamw_betas=HP_train['adamw_betas'],
+                           onecycle_total_steps=HP_train['max_epochs']*len(data.train_dataloader()), 
+                           onecycle_final_div_factor=HP_train['1cycle_final_div_factor'],
                            empty_cache_every_epoch=False,
                            enable_embed_decay=True,
                            )
-trainer = pl.Trainer(max_epochs=max_epoch,
+trainer = pl.Trainer(max_epochs=HP_train['max_epochs'],
                     accelerator="gpu",
+                    devices=[int(device.split(":")[-1])], # 单卡训练
                     check_val_every_n_epoch=1,
                     log_every_n_steps=100,
                     precision='16-mixed',
+                    gradient_clip_val=HP_train['gradient_clip_val'],
                     benchmark=True,
                     logger=tb_logger,
                     callbacks=[checkpoint_callback],
                     )
 
 trainer.fit(train_module, train_dataloaders=data.train_dataloader(), val_dataloaders=data.val_dataloader())
+
 trainer.test(train_module, dataloaders=data.test_dataloader())
 
 best_train_module = TrainModule.load_from_checkpoint(checkpoint_callback.best_model_path, model=model)

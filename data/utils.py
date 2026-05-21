@@ -120,7 +120,7 @@ def AtomsData2ase(data: AtomsData, properties: list[str]=None) -> Atoms:
 def AtomsData2ase_list(data_batch: AtomsData, properties: list[str]=None) -> list[Atoms]:
     raise NotImplementedError("AtomsData2ase_list 未实现")
 
-def _process_single_batch(batch, pml_rcut, pml_mnn, iml_rcut, iml_mnn, store_device):
+def _process_single_basic_batch(batch, pml_rcut, pml_mnn, iml_rcut, iml_mnn, store_device):
     """单个batch的处理函数"""
     batch.update_topo(pml_rcut=pml_rcut, pml_mnn=pml_mnn, 
                       iml_rcut=iml_rcut, iml_mnn=iml_mnn)
@@ -137,7 +137,7 @@ def update_basic_batch(loader: DataLoader, pml_rcut, pml_mnn, iml_rcut, iml_mnn,
     batches = list(loader)
     
     results = Parallel(n_jobs=num_workers, prefer="processes")(
-        delayed(_process_single_batch)(batch, pml_rcut, pml_mnn, iml_rcut, iml_mnn, store_device)
+        delayed(_process_single_basic_batch)(batch, pml_rcut, pml_mnn, iml_rcut, iml_mnn, store_device)
         for batch in tqdm.tqdm(batches, desc="Updating topo", unit="batch")
     )
     
@@ -156,15 +156,15 @@ def update_cplt_graph(basic_graph: AtomsData, store_device='cpu', pos_grad=False
         basic_graph.strip_topo()
     return basic_graph
 
-def update_cplt_batch(basic_batch: list[AtomsData], store_device='cpu') -> list[AtomsData]:
-        cplt = []
-        for b in tqdm.tqdm(basic_batch, desc='updating geo', unit='batch'):
-            c = update_cplt_graph(b,
-                                store_device=store_device, 
-                                pos_grad=False, 
-                                if_strip=True)
-            cplt.append(c)
-        return cplt
+def update_cplt_batch(basic_batch: list[AtomsData], store_device: str = 'cpu', num_workers=None):
+    if num_workers is None:
+        num_workers = 1
+        
+    results = Parallel(n_jobs=num_workers, prefer="processes")(
+        delayed(update_cplt_graph)(b, store_device=store_device, pos_grad=False, if_strip=True)
+        for b in tqdm.tqdm(basic_batch, desc='updating geo', unit='batch')
+    )
+    return results
 
 
 def MonoatomicChain_check(data: Atoms):

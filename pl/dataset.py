@@ -95,11 +95,11 @@ class DataModule(pl.LightningDataModule):
                 self.test_batch = test_batch
         
         elif self.return_type == 'cplt':
-            self.train_batch = update_cplt_batch(train_batch, self.store_device)
+            self.train_batch = update_cplt_batch(train_batch, self.store_device, self.num_workers)
             if self.val_batch is not None:
-                self.val_batch = update_cplt_batch(val_batch, self.store_device)
+                self.val_batch = update_cplt_batch(val_batch, self.store_device, self.num_workers)
             if self.test_batch is not None:
-                self.test_batch = update_cplt_batch(test_batch, self.store_device)
+                self.test_batch = update_cplt_batch(test_batch, self.store_device, self.num_workers)
             
     def train_dataloader(self):
         return IterData(self.train_batch)

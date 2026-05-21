@@ -1,6 +1,7 @@
 import os
 device = "cuda:0"
 os.environ["DIGNN_ENV"] = device
+# os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 import sys
 sys.path.append(r'/home/user/tys/DIGNN')
@@ -17,6 +18,7 @@ import pandas as pd
 from ase.atoms import Atoms
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
+from joblib import Parallel, delayed
 
 HP_atomsdata = {"pml_rcut": 5.0, "pml_mnn": 12, "iml_rcut": 10.0, "iml_mnn": 24} # HP指hyperparams
 HP_feat_dim = {'atom_dim': 512, 'bond_dim': 512, 'ang_dim': 256, 'dih_dim': 128}
@@ -24,7 +26,7 @@ HP_nn = {'init': 1, 'pml': 4, 'iml': 8, 'decoder': [64,1], 'pooling': 'mean'}
 HP_train = {'batch_size': 32, 'max_epochs': 300, 'lr': 1e-2, 'adamw_weight_decay': 1e-2,
             'adamw_betas': (0.9, 0.999), '1cycle_final_div_factor': 1e+5, 'gradient_clip_val': 1.0}
 
-def generate_Graphs_from_jarvis(file_path:str, property:str, r_cut:float) -> list[AtomsData]:
+def generate_Graphs_from_jarvis(file_path:str, property:str, r_cut:float, num_workers:int=1) -> list[AtomsData]:
     """
     basic_graphs: list of AtomsData, 只包含元素、坐标、力、能量和拓扑结构
     """
@@ -32,13 +34,8 @@ def generate_Graphs_from_jarvis(file_path:str, property:str, r_cut:float) -> lis
     jarvis[property] = jarvis[property].replace('na', np.nan)
     mask = jarvis[property].notna()
     jarvis = jarvis[mask]
-
-
-    basic_graphs = []
-    special_atoms = []
-    start_time = time.time()
     
-    for i,mol in enumerate(jarvis.iloc):
+    def _jarvis_process(mol, property:str, r_cut:float):
         atoms = Atoms(symbols=mol['atoms']['elements'],
                       positions=mol['atoms']['coords'],
                       cell=mol['atoms']['lattice_mat'],
@@ -47,23 +44,15 @@ def generate_Graphs_from_jarvis(file_path:str, property:str, r_cut:float) -> lis
         try:
             data = ase2AtomsData(atoms, check_rcut=r_cut, properties=[property])
         except:
-            special_atoms.append(atoms)
             continue
-        basic_graphs.append(data)
-
-        if i % 1000 == 0:
-            print(f'sample:{i},time_cost:{time.time() - start_time}')
-            start_time = time.time()
+        return data
     
-    special_graphs = []
-    for atoms in special_atoms:
-        try:
-            data = ase2AtomsData(atoms, check_rcut=22, properties=[property]) # 对于JARVIS的孤立体系也足够, 暂时不用
-        except:
-            continue
-        special_graphs.append(data)
+    basic_graphs = Parallel(n_jobs=num_workers, prefer="Preprocess")(
+        delayed(_jarvis_process)(mol, property, r_cut)
+        for mol in tqdm(jarvis.iloc, desc="Processing molecules", unit="molecule")
+    )
     
-    return basic_graphs, special_graphs
+    return basic_graphs
 
 property = 'mbj_bandgap'
 """
@@ -84,12 +73,12 @@ property = 'mbj_bandgap'
         'mbj_bandgap', 'hse_gap', 'reference', 'search']
 """
 atomsdata, special_atomsdata = generate_Graphs_from_jarvis(r'jarvis/data/jdft_3d-8-18-2021.json',
-                                         property=property, r_cut=HP_atomsdata['pml_rcut'])
+                                         property=property, r_cut=HP_atomsdata['pml_rcut'], num_workers=32)
 
 data = DataModule(atomsdata,
                     **HP_atomsdata,
                     test_size=0.1, val_size=0.1,
-                    batch_size=HP_train['batch_size'], num_workers=-2, store_device='cpu',
+                    batch_size=HP_train['batch_size'], num_workers=32, store_device='cpu',
                     mapper=AtomIndexMapper(),
                     return_type='cplt',
                     )
@@ -126,7 +115,7 @@ model = dgm.DIGNN(encoder=dgm.Encoder(num_species=data.mapper.num_embeddings,
                 ).to(device)
                 
 from pytorch_lightning.loggers import TensorBoardLogger
-tb_logger = TensorBoardLogger("tb_logs", name='bandgap_mbj')
+tb_logger = TensorBoardLogger("tb_logs", name=property)
 tb_logger.log_hyperparams({**HP_atomsdata, 
                            **HP_feat_dim, 
                             'n_layer':(HP_nn['pml'], HP_nn['iml']),

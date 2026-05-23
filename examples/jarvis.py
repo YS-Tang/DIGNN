@@ -1,10 +1,10 @@
 import os
 device = "cuda:0"
 os.environ["DIGNN_ENV"] = device
-# os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 import sys
-sys.path.append(r'/home/user/tys/DIGNN')
+sys.path.append(r'/home/lizhe/tys/DIGNN')
 
 from DIGNN.data import ase2AtomsData, AtomsData
 from DIGNN.utils import AtomIndexMapper
@@ -12,6 +12,7 @@ from DIGNN.pl import DataModule, TrainModule
 from DIGNN.nn import models as dgm
 
 import time
+from tqdm import tqdm
 import torch
 import numpy as np
 import pandas as pd
@@ -20,10 +21,10 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from joblib import Parallel, delayed
 
-HP_atomsdata = {"pml_rcut": 5.0, "pml_mnn": 12, "iml_rcut": 10.0, "iml_mnn": 24} # HP指hyperparams
-HP_feat_dim = {'atom_dim': 512, 'bond_dim': 512, 'ang_dim': 256, 'dih_dim': 128}
-HP_nn = {'init': 1, 'pml': 4, 'iml': 8, 'decoder': [64,1], 'pooling': 'mean'}
-HP_train = {'batch_size': 32, 'max_epochs': 300, 'lr': 1e-2, 'adamw_weight_decay': 1e-2,
+HP_atomsdata = {"pml_rcut": 5.0, "pml_mnn": 16, "iml_rcut": 10.0, "iml_mnn": 32} # HP指hyperparams
+HP_feat_dim = {'atom_dim': 256, 'bond_dim': 256, 'ang_dim': 128, 'dih_dim': 64}
+HP_nn = {'init': 1, 'pml': 4, 'iml': 8, 'decoder': [128,64,1], 'pooling': 'mean'}
+HP_train = {'batch_size': 4, 'max_epochs': 300, 'lr': 1e-3, 'adamw_weight_decay': 1e-3,
             'adamw_betas': (0.9, 0.999), '1cycle_final_div_factor': 1e+5, 'gradient_clip_val': 1.0}
 
 def generate_Graphs_from_jarvis(file_path:str, property:str, r_cut:float, num_workers:int=1) -> list[AtomsData]:
@@ -43,18 +44,19 @@ def generate_Graphs_from_jarvis(file_path:str, property:str, r_cut:float, num_wo
         atoms.arrays[property] = np.array(mol[property])
         try:
             data = ase2AtomsData(atoms, check_rcut=r_cut, properties=[property])
-        except:
-            continue
+        except Exception:
+            return None
         return data
     
-    basic_graphs = Parallel(n_jobs=num_workers, prefer="Preprocess")(
+    results = Parallel(n_jobs=num_workers, prefer="processes")(
         delayed(_jarvis_process)(mol, property, r_cut)
         for mol in tqdm(jarvis.iloc, desc="Processing molecules", unit="molecule")
     )
+    basic_graphs = [r for r in results if r is not None]
     
     return basic_graphs
 
-property = 'mbj_bandgap'
+property = 'magmom_oszicar'
 """
 ['jid', 'spg_number', 'spg_symbol', 'formula',
         'formation_energy_peratom', 'func', 'optb88vdw_bandgap', 'atoms',
@@ -72,7 +74,7 @@ property = 'mbj_bandgap'
         'poisson', 'raw_files', 'nat', 'bulk_modulus_kv', 'shear_modulus_gv',
         'mbj_bandgap', 'hse_gap', 'reference', 'search']
 """
-atomsdata, special_atomsdata = generate_Graphs_from_jarvis(r'jarvis/data/jdft_3d-8-18-2021.json',
+atomsdata = generate_Graphs_from_jarvis(r'/home/lizhe/tys/data/jarvis/jdft_3d-8-18-2021.json',
                                          property=property, r_cut=HP_atomsdata['pml_rcut'], num_workers=32)
 
 data = DataModule(atomsdata,

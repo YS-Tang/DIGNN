@@ -4,6 +4,7 @@ from torch import nn
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import OneCycleLR
 import numpy as np
+import gc
 
 from ..nn.models.dignn import DIGNN
 from ..data.utils import update_cplt_graph
@@ -63,7 +64,7 @@ class TrainModule(pl.LightningModule):
         self.log("val_loss", loss, prog_bar=True, on_epoch=True)
         self.log("val_mae_prop", mae_prop, prog_bar=True, on_epoch=True)
         
-        return {"val_loss": loss, "val_mae_prop": mae_prop}
+        return {"val_loss": loss.detach(), "val_mae_prop": mae_prop.detach()}
 
     def test_step(self, batch, batch_idx):
         # cplt = batch#.to(self.device)
@@ -77,10 +78,11 @@ class TrainModule(pl.LightningModule):
         self.test_results['preds'].append(prop.view(-1, 1).detach().cpu().numpy())
         self.test_results['targets'].append(batch[self.prop].view(-1, 1).detach().cpu().numpy())
         
-        return {"test_loss": loss, "test_mae_prop": mae_prop}
+        return {"test_loss": loss.detach(), "test_mae_prop": mae_prop.detach()}
     
     def on_train_epoch_end(self):
         if self.empty_cache_every_epoch and self.trainer.is_global_zero:
+            gc.collect()
             torch.cuda.empty_cache()
     
     def on_test_epoch_end(self):

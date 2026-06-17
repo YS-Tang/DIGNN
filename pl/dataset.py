@@ -52,19 +52,25 @@ class DataModule(pl.LightningDataModule):
         self.train_batch = []
         self.val_batch = []
         self.test_batch = []
-    def setup(self, stage=None):
-        val_test_size = self.test_size + self.val_size
-        train_data, val_test_data = train_test_split(self.atomsdata, test_size=val_test_size, random_state=self.random_state) 
         
-        if self.val_size == 0.0:
-            self.val_batch = None
-            test_data = val_test_data
-        if self.test_size == 0.0:
-            self.test_batch = None
-            val_data = val_test_data
-        if self.val_size > 0.0 and self.test_size > 0.0:
-            val_data, test_data = train_test_split(val_test_data, test_size=self.test_size/val_test_size, random_state=self.random_state)
-        
+    def setup(self, stage=None, input_TrainValTestList_directly: List[List[AtomsData]]=None):
+        if input_TrainValTestList_directly is None:
+            val_test_size = self.test_size + self.val_size
+            train_data, val_test_data = train_test_split(self.atomsdata, test_size=val_test_size, random_state=self.random_state) 
+            
+            if self.val_size == 0.0:
+                self.val_batch, test_data = None, val_test_data
+            if self.test_size == 0.0:
+                self.test_batch, val_data = None, val_test_data
+            if self.val_size > 0.0 and self.test_size > 0.0:
+                val_data, test_data = train_test_split(val_test_data, test_size=self.test_size/val_test_size, random_state=self.random_state)
+                
+        else:
+            train_data, val_data, test_data = input_TrainValTestList_directly
+            if val_data is None: self.val_batch, val_data = None, []
+            if test_data is None: self.test_batch, test_data = None, []
+            self.atomsdata = train_data + val_data + test_data
+            
         if self.mapper is not None:
             if self.mapper.known_atomic_numbers == []:
                 all_atom_nums = np.unique(np.concatenate([data.atom.numpy() for data in self.atomsdata]))

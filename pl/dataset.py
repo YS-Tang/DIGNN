@@ -53,7 +53,7 @@ class DataModule(pl.LightningDataModule):
         self.val_batch = []
         self.test_batch = []
         
-    def setup(self, stage=None, input_TrainValTestList_directly: List[List[AtomsData]]=None):
+    def setup(self, stage=None, input_TrainValTestList_directly: List[List[AtomsData]]=None, no_train:bool=False):
         if input_TrainValTestList_directly is None:
             val_test_size = self.test_size + self.val_size
             train_data, val_test_data = train_test_split(self.atomsdata, test_size=val_test_size, random_state=self.random_state) 
@@ -87,7 +87,8 @@ class DataModule(pl.LightningDataModule):
         if self.test_batch is not None:
             test_loader = DataLoader(test_data, batch_size=self.batch_size, shuffle=False, follow_batch=['atom'])
         
-        train_batch = update_basic_batch(train_loader, self.pml_rcut, self.pml_mnn, self.iml_rcut, self.iml_mnn, self.store_device, self.num_workers)
+        if not no_train:
+            train_batch = update_basic_batch(train_loader, self.pml_rcut, self.pml_mnn, self.iml_rcut, self.iml_mnn, self.store_device, self.num_workers)
         if self.val_batch is not None:
             val_batch = update_basic_batch(val_loader, self.pml_rcut, self.pml_mnn, self.iml_rcut, self.iml_mnn, self.store_device, self.num_workers)
         if self.test_batch is not None:
@@ -101,7 +102,8 @@ class DataModule(pl.LightningDataModule):
                 self.test_batch = test_batch
         
         elif self.return_type == 'cplt':
-            self.train_batch = update_cplt_batch(train_batch, self.store_device, self.num_workers)
+            if not no_train:
+                self.train_batch = update_cplt_batch(train_batch, self.store_device, self.num_workers)
             if self.val_batch is not None:
                 self.val_batch = update_cplt_batch(val_batch, self.store_device, self.num_workers)
             if self.test_batch is not None:

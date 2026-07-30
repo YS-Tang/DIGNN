@@ -4,7 +4,7 @@ os.environ["DIGNN_ENV"] = device
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 import sys
-sys.path.append(r'/home/lizhe/tys/DIGNN')
+sys.path.append(r'../..')
 
 from DIGNN.data import ase2AtomsData, AtomsData
 from DIGNN.utils import AtomIndexMapper
@@ -21,10 +21,10 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from joblib import Parallel, delayed
 
-HP_atomsdata = {"pml_rcut": 5.0, "pml_mnn": 16, "iml_rcut": 10.0, "iml_mnn": 32} # HP指hyperparams
-HP_feat_dim = {'atom_dim': 256, 'bond_dim': 256, 'ang_dim': 128, 'dih_dim': 64}
-HP_nn = {'init': 1, 'pml': 4, 'iml': 8, 'decoder': [128,64,1], 'pooling': 'mean'}
-HP_train = {'batch_size': 4, 'max_epochs': 300, 'lr': 1e-3, 'adamw_weight_decay': 1e-3,
+HP_atomsdata = {"pml_rcut": 5.0, "pml_mnn": 4, "iml_rcut": 10.0, "iml_mnn": 8} # HP指hyperparams
+HP_feat_dim = {'atom_dim': 64, 'bond_dim': 64, 'ang_dim': 32, 'dih_dim': 16}
+HP_nn = {'init': 1, 'pml': 1, 'iml': 4, 'decoder': [32,1], 'pooling': 'mean'}
+HP_train = {'batch_size': 4, 'max_epochs': 10, 'lr': 1e-3, 'adamw_weight_decay': 1e-3,
             'adamw_betas': (0.9, 0.999), '1cycle_final_div_factor': 1e+5, 'gradient_clip_val': 1.0}
 
 def generate_Graphs_from_jarvis(file_path:str, property:str, r_cut:float, num_workers:int=1) -> list[AtomsData]:
@@ -56,7 +56,7 @@ def generate_Graphs_from_jarvis(file_path:str, property:str, r_cut:float, num_wo
     
     return basic_graphs
 
-property = 'magmom_oszicar'
+property = 'optb88vdw_total_energy'
 """
 ['jid', 'spg_number', 'spg_symbol', 'formula',
         'formation_energy_peratom', 'func', 'optb88vdw_bandgap', 'atoms',
@@ -74,28 +74,20 @@ property = 'magmom_oszicar'
         'poisson', 'raw_files', 'nat', 'bulk_modulus_kv', 'shear_modulus_gv',
         'mbj_bandgap', 'hse_gap', 'reference', 'search']
 """
-atomsdata = generate_Graphs_from_jarvis(r'/home/lizhe/tys/data/jarvis/jdft_3d-8-18-2021.json',
-                                         property=property, r_cut=HP_atomsdata['pml_rcut'], num_workers=32)
+# 正式训练使用完整 JARVIS 数据集; 快速测试可改用同目录的 1000 样本文件:
+#   atomsdata = generate_Graphs_from_jarvis('jarvis_1000samples.json',
+#                                           property=property, r_cut=HP_atomsdata['pml_rcut'], num_workers=8)
+atomsdata = generate_Graphs_from_jarvis(r'jarvis_1000samples.json',
+                                         property=property, r_cut=HP_atomsdata['pml_rcut'], num_workers=8)
 
 data = DataModule(atomsdata,
                     **HP_atomsdata,
                     test_size=0.1, val_size=0.1,
-                    batch_size=HP_train['batch_size'], num_workers=32, store_device='cpu',
+                    batch_size=HP_train['batch_size'], num_workers=8, store_device='cpu',
                     mapper=AtomIndexMapper(),
                     return_type='cplt',
                     )
 data.setup()
-
-# special_data = DataModule(special_atomsdata,
-#                     **{"pml_rcut": 22.0, "pml_mnn": 12, "iml_rcut": 22.0, "iml_mnn": 24},
-#                     test_size=0, val_size=0.1,
-#                     batch_size=40, num_workers=-2, store_device='cpu',
-#                     mapper=data.mapper,
-#                     return_type='cplt',
-#                     )
-# special_data.setup()
-
-# data.train_batch += special_data.train_batch
 
 
 model = dgm.DIGNN(encoder=dgm.Encoder(num_species=data.mapper.num_embeddings,
@@ -137,7 +129,7 @@ checkpoint_callback = ModelCheckpoint(
 )
 
 train_module = TrainModule(model, 
-                           compile_model=True,
+                           compile_model=False,
                            lr=HP_train['lr'],
                            prop=property,
                            adamw_weight_decay=HP_train['adamw_weight_decay'],

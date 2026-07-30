@@ -23,12 +23,15 @@ class BaseProcessor(ABC, nn.Module):
                  iml: int = 4, 
                  residual: bool = True,
                  dropout: float = 0.0,
-                 init_nn_layer: int=3):
+                 init_nn_layer: int=3,
+                 use_global_token: bool = False):
         super().__init__()
         self.pml = pml
         self.iml = iml
         self.residual = residual
         self.dropout = dropout
+        self.atom_dim = atom_dim
+        self.use_global_token = use_global_token
         
         self._init_feature_nns(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, init_nn_layer)
         self.pml_node_only = None
@@ -64,7 +67,8 @@ class BaseProcessor(ABC, nn.Module):
     
     def _init_processor_components(self):
         self.hgc = HGC(self.atm_bnd_pmls, self.bnd_ang_pmls, self.ang_dih_pmls, self.pml_node_only)
-        self.lcp = LCP(self.atm_bnd_imls, self.iml_node_only)
+        self.lcp = LCP(self.atm_bnd_imls, self.iml_node_only,
+                       use_global_token=self.use_global_token, atom_dim=self.atom_dim)
         
     def forward(self,
                 h_atm: torch.Tensor, # reorgnization数据
@@ -81,7 +85,8 @@ class BaseProcessor(ABC, nn.Module):
                 index_ang_map, # reorgnization数据向完整数据的映射
                 index_bond_map, 
                 index_dih_map,
-                index_bondI_map) -> torch.Tensor:
+                index_bondI_map,
+                atom_batch=None) -> torch.Tensor:
         """前向传播
         
         Args:
@@ -111,7 +116,7 @@ class BaseProcessor(ABC, nn.Module):
                                   edge_index_bnd, edge_index_ang, edge_index_dih,
                                   index_bond_map, index_ang_map, index_dih_map)
         
-        h_atm = self._iml_forward(h_atm, h_bndI, edge_index_bndI, index_bondI_map)
+        h_atm = self._iml_forward(h_atm, h_bndI, edge_index_bndI, index_bondI_map, atom_batch)
         
         return h_atm
     
@@ -134,8 +139,9 @@ class BaseProcessor(ABC, nn.Module):
                    h_atm: torch.Tensor,
                    h_bndI: torch.Tensor,
                    edge_index_bndI: torch.Tensor,
-                   index_bondI_map) -> torch.Tensor:
-        return self.lcp(h_atm, h_bndI, edge_index_bndI, index_bondI_map)
+                   index_bondI_map,
+                   atom_batch=None) -> torch.Tensor:
+        return self.lcp(h_atm, h_bndI, edge_index_bndI, index_bondI_map, atom_batch)
 
 
 
@@ -152,8 +158,9 @@ class GCN_Processor(BaseProcessor):
                  residual: bool = False,
                  dropout: float = 0.0,
                  bondI_dim: int = 32,
-                 init_nn_layer: int = 3):
-        super().__init__(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, pml, iml, residual, dropout, init_nn_layer)
+                 init_nn_layer: int = 3,
+                 use_global_token: bool = False):
+        super().__init__(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, pml, iml, residual, dropout, init_nn_layer, use_global_token)
         
         self.pml_node_only = False
         self.iml_node_only = False
@@ -192,8 +199,9 @@ class GINE_Processor(BaseProcessor):
                  dropout: float = 0.0,
                  bondI_dim: int = 32,
                  gin_nn: List[int] = [64, 128, 64],
-                 init_nn_layer: int = 3):
-        super().__init__(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, pml, iml, residual, dropout, init_nn_layer)
+                 init_nn_layer: int = 3,
+                 use_global_token: bool = False):
+        super().__init__(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, pml, iml, residual, dropout, init_nn_layer, use_global_token)
         
         self.pml_node_only = False
         self.iml_node_only = True
@@ -240,8 +248,9 @@ class GATv2_Processor(BaseProcessor):
                  dropout: float = 0.0,
                  bondI_dim: int = 32,
                  gat_heads: int = 1,
-                 init_nn_layer: int = 3):
-        super().__init__(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, pml, iml, residual, dropout, init_nn_layer)
+                 init_nn_layer: int = 3,
+                 use_global_token: bool = False):
+        super().__init__(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, pml, iml, residual, dropout, init_nn_layer, use_global_token)
         
         self.pml_node_only = False
         self.iml_node_only = True
@@ -294,8 +303,9 @@ class EGAT_Processor(BaseProcessor):
                  bondI_dim: int = 32,
                  egat_heads: int = 4,
                  egat_fc_layers: int = 2,
-                 init_nn_layer: int = 3):
-        super().__init__(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, pml, iml, residual, dropout, init_nn_layer)
+                 init_nn_layer: int = 3,
+                 use_global_token: bool = False):
+        super().__init__(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, pml, iml, residual, dropout, init_nn_layer, use_global_token)
         
         self.pml_node_only = False
         self.iml_node_only = False

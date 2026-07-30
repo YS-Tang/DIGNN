@@ -9,34 +9,48 @@ class GlobalInteraction(nn.Module):
     """基于 virtual node 的全局信息交互模块。
 
     设计要点(针对用户之前 12-vnode 方案效果不佳的改进):
-    1. 每个图仅 1 个 virtual node, 严格按 atom_batch 隔离, 避免同一 batch
-       内不同体系通过共享 vnode 串信息(此为之前方案最可能的失效根因)。
-    2. 机制为 pool->广播: vnode = MLP(全图原子特征池化), 再广播回每个原子,
-       不复用几何 GatedGCN 算子(其边门控为真实键长设计, 对随机 vnode 边无意义)。
-    3. 仅用标量特征, 不涉及坐标 -> 保持平移/旋转不变性, 不破坏能量-力导数关系。
-    4. 残差式注入: 初始(未训练时)近似恢复为恒等, 对现有行为扰动最小。
-
-    复杂度 O(N), 兼容 PBC 晶体。
+    1. 严格按 atom_batch 隔离, 避免同一 batch 内不同体系串信息。
+    2. 支持 num_tokens 个 virtual node, 每个 token 拥有独立的查询向量与 value 变换,
+       通过注意力池化(而非单一 mean)使各 token 关注不同原子子集, 避免多 token
+       学到相同信息(类似多头注意力 / Set Transformer 的 PMA)。num_tokens=1 时退化
+       为单个学习加权池化。
+    3. 无显式边、无自由 vnode 参数: vnode 每层由全图原子特征当场聚合得到,
+       是数据驱动的有意义全局摘要, 无需随机初始化。
+    4. 仅用标量特征, 不涉坐标 -> 保持平移/旋转不变性, 不破坏能量-力导数关系。
+    5. 残差式注入, 初始近似恒等, 对现有行为扰动最小。复杂度 O(N), 兼容 PBC。
     """
 
-    def __init__(self, dim: int, reduce: str = 'mean'):
+    def __init__(self, dim: int, num_tokens: int = 1):
         super().__init__()
         self.dim = dim
-        self.reduce = reduce
-        # 池化后的全局向量变换为 virtual node 表示
-        self.to_global = MLP([dim, dim, dim], act=nn.SiLU())
-        # 将(原子特征, 全局特征)融合后得到对每个原子的更新量
-        self.update = MLP([dim * 2, dim, dim], act=nn.SiLU())
+        self.num_tokens = num_tokens
+        # 每个 token 的可学习查询向量(决定它关注哪些原子) 与独立 value 变换
+        self.query = nn.Parameter(torch.randn(num_tokens, dim) * (dim ** -0.5))
+        self.value = nn.Linear(dim, num_tokens * dim)
+        # 将(原子特征, 拼接的各 token 全局特征)融合为每个原子的更新量
+        self.update = MLP([dim * (1 + num_tokens), dim, dim], act=nn.SiLU())
         self.norm = nn.LayerNorm(dim)
 
-    def forward(self, h_atm: torch.Tensor, atom_batch: torch.Tensor) -> torch.Tensor:
-        # 按图池化: 得到每个图的 virtual node (严格 batch 隔离)
-        num_graphs = int(atom_batch.max()) + 1
-        g = scatter(h_atm, atom_batch, dim=0, reduce=self.reduce, dim_size=num_graphs)
-        g = self.to_global(g)                       # [num_graphs, dim]
-        g_broadcast = g[atom_batch]                 # 广播回每个原子 [N, dim]
+    def forward(self, h_atm: torch.Tensor, atom_batch: torch.Tensor,
+                num_graphs: int = None) -> torch.Tensor:
+        if num_graphs is None:
+            num_graphs = int(atom_batch.max()) + 1
+        N = h_atm.size(0)
+        # 每个 token 对各原子的打分 [N, num_tokens]
+        scores = (h_atm @ self.query.t()) / (self.dim ** 0.5)
+        # 按图内原子做 softmax(严格 batch 隔离): 减去段内最大值后 exp 再归一化
+        smax = scatter(scores, atom_batch, dim=0, dim_size=num_graphs, reduce='max')
+        expv = (scores - smax[atom_batch]).exp()
+        denom = scatter(expv, atom_batch, dim=0, dim_size=num_graphs, reduce='sum') + 1e-12
+        alpha = expv / denom[atom_batch]                                  # [N, num_tokens]
+        # value 拆分为每个 token 独立的变换 [N, num_tokens, dim]
+        val = self.value(h_atm).view(N, self.num_tokens, self.dim)
+        # 注意力加权池化 -> 每图每 token 一个全局向量 [num_graphs, num_tokens, dim]
+        weighted = alpha.unsqueeze(-1) * val
+        g = scatter(weighted, atom_batch, dim=0, dim_size=num_graphs, reduce='sum')
+        g_broadcast = g[atom_batch].reshape(N, self.num_tokens * self.dim)  # 广播回原子
         delta = self.update(torch.cat([h_atm, g_broadcast], dim=-1))
-        return h_atm + self.norm(delta)             # 残差注入
+        return h_atm + self.norm(delta)                                  # 残差注入
 
 
 class HGC(nn.Module):
@@ -95,7 +109,8 @@ class LCP(nn.Module):
                  atm_bnd_imls: nn.ModuleList,
                  iml_node_only: bool = False,
                  use_global_token: bool = False,
-                 atom_dim: int = None):
+                 atom_dim: int = None,
+                 num_tokens: int = 1):
         super().__init__()
         self.atm_bnd_imls = atm_bnd_imls
         self.iml_node_only = iml_node_only
@@ -104,7 +119,7 @@ class LCP(nn.Module):
         if use_global_token:
             assert atom_dim is not None, "use_global_token 时必须提供 atom_dim"
             self.global_layers = nn.ModuleList([
-                GlobalInteraction(atom_dim) for _ in range(len(atm_bnd_imls))
+                GlobalInteraction(atom_dim, num_tokens=num_tokens) for _ in range(len(atm_bnd_imls))
             ])
         else:
             self.global_layers = None

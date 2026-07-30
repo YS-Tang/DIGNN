@@ -23,7 +23,8 @@ from joblib import Parallel, delayed
 
 HP_atomsdata = {"pml_rcut": 5.0, "pml_mnn": 4, "iml_rcut": 10.0, "iml_mnn": 8} # HP指hyperparams
 HP_feat_dim = {'atom_dim': 64, 'bond_dim': 64, 'ang_dim': 32, 'dih_dim': 16}
-HP_nn = {'init': 1, 'pml': 1, 'iml': 4, 'decoder': [32,1], 'pooling': 'mean'}
+HP_nn = {'init': 1, 'pml': 1, 'iml': 4, 'decoder': [32,1], 'pooling': 'mean',
+         'use_global_token': False, 'num_global_tokens': 1}  # virtual node 全局交互, 默认关闭
 HP_train = {'batch_size': 4, 'max_epochs': 10, 'lr': 1e-3, 'adamw_weight_decay': 1e-3,
             'adamw_betas': (0.9, 0.999), '1cycle_final_div_factor': 1e+5, 'gradient_clip_val': 1.0}
 
@@ -102,6 +103,8 @@ model = dgm.DIGNN(encoder=dgm.Encoder(num_species=data.mapper.num_embeddings,
                                             dropout=0.0,
                                             bondI_dim=HP_feat_dim['bond_dim'],
                                             init_nn_layer=HP_nn['init'],
+                                            use_global_token=HP_nn['use_global_token'],
+                                            num_global_tokens=HP_nn['num_global_tokens'],
                                             ), 
                 decoder=dgm.Decoder(dim=[HP_feat_dim['atom_dim']] + HP_nn['decoder'],
                                     reduce_method=HP_nn['pooling'],
@@ -116,6 +119,8 @@ tb_logger.log_hyperparams({**HP_atomsdata,
                             'decoder':HP_nn['decoder'],  
                             'init_nn_layer':HP_nn['init'],
                             'pooling':HP_nn['pooling'],
+                            'use_global_token':HP_nn['use_global_token'],
+                            'num_global_tokens':HP_nn['num_global_tokens'],
                             **HP_train,
                             })
 

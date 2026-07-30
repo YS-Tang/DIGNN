@@ -15,6 +15,9 @@ class DIGNN(nn.Module):
         index_angle_map, index_bond_map, index_dih_map, index_bondI_map = data.AngReo4Ang, data.BndReo4Bnd, data.DihReo4Dih, data.BndReo4BndI
         
         atom_batch = getattr(data, 'atom_batch', None)
+        # 预存的批内图数量作为常量 dim_size 传入 decoder,
+        # 使 dynamo 将其视为常量, 消除池化处因 unique() 导致的 graph break。
+        n_graphs = getattr(data, 'n_graphs', None)
         
         e_atm, e_bnd, e_ang, e_dih, e_bndI = self.encoder(x_atm, x_bnd, x_ang, x_dih, x_bndI)
         
@@ -22,5 +25,5 @@ class DIGNN(nn.Module):
                                 edge_index_bnd, edge_index_ang, edge_index_dih, edge_index_bndI,
                                 index_angle_map, index_bond_map, index_dih_map, index_bondI_map
                                 )
-        d_atm = self.decoder(p_atm, atom_batch)
+        d_atm = self.decoder(p_atm, atom_batch, dim_size=n_graphs)
         return d_atm

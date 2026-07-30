@@ -1,12 +1,11 @@
-import copy
-from abc import ABC, abstractmethod
-from typing import List, Optional, Tuple, Union
+from abc import ABC
+from typing import List
 
 import torch
 from torch import nn
-from torch_geometric.utils import scatter
 
 from ...utils import MLP
+from ...convs.gcn import GatedGCN
 from .processor_components import HGC, LCP
 
 class BaseProcessor(ABC, nn.Module):
@@ -163,8 +162,6 @@ class GCN_Processor(BaseProcessor):
     
     def _init_gcn_layers(self, atom_dim: int, bond_dim: int, ang_dim: int, dih_dim: int, bondI_dim: int) -> None:
         """初始化 GCN 层"""
-        from ...convs.gcn import GatedGCN
-        
         self.atm_bnd_pmls = nn.ModuleList([
             GatedGCN(atom_dim, bond_dim, residual=self.residual) for _ in range(self.pml)
         ])
@@ -206,7 +203,7 @@ class GINE_Processor(BaseProcessor):
     def _init_layers(self, atom_dim: int, bond_dim: int, ang_dim: int, dih_dim: int, bondI_dim: int, gin_nn: List[int] = None) -> None:
         """初始化, 暂只修改IML层交互为GINE"""
         from ...convs.gin import GINE
-        
+
         self.atm_bnd_pmls = nn.ModuleList([
             GatedGCN(atom_dim, bond_dim, residual=self.residual) for _ in range(self.pml)
         ])
@@ -254,7 +251,7 @@ class GATv2_Processor(BaseProcessor):
     def _init_layers(self, atom_dim: int, bond_dim: int, ang_dim: int, dih_dim: int, bondI_dim: int, gat_heads: int = None) -> None:
         """初始化, 暂只修改IML层交互为GATv2"""
         from torch_geometric.nn import GATv2Conv
-        
+
         self.atm_bnd_pmls = nn.ModuleList([
             GatedGCN(atom_dim, bond_dim, residual=self.residual) for _ in range(self.pml)
         ])

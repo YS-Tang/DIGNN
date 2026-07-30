@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 from torch_geometric.utils import scatter
-from typing import List, Optional, Tuple
+from typing import List
 from ...utils import MLP
 
 class PoolingModule(nn.Module):
@@ -9,10 +9,15 @@ class PoolingModule(nn.Module):
         super().__init__()
         self.reduce_method = reduce_method
 
-    def forward(self, h_atm, atm_batch=None):
+    def forward(self, h_atm, atm_batch=None, dim_size=None):
         if atm_batch is not None:
+            # dim_size 优先使用预存的常量(来自 data.n_graphs), 此时 dynamo
+            # 视其为常量, pooling 处零 graph break; 未传入时回退 unique().numel()
+            # 以保持对 Calculator 等单图推理路径的向后兼容。
+            if dim_size is None:
+                dim_size = atm_batch.unique().numel()
             h_atm_pooled = scatter(h_atm, atm_batch, dim=0, 
-                                   reduce=self.reduce_method, dim_size=atm_batch.unique().numel())
+                                   reduce=self.reduce_method, dim_size=dim_size)
             return h_atm_pooled
         else:
             return h_atm.mean(dim=0)
@@ -25,8 +30,8 @@ class Decoder(nn.Module):
         self.pooling = PoolingModule(reduce_method=reduce_method)
         self.decoder = MLP(dim, act=nn.SiLU(), batch_norm=batch_norm, dropout=dropout)
 
-    def forward(self, h_atm, atm_batch=None):
-        h_pooled = self.pooling(h_atm, atm_batch)
+    def forward(self, h_atm, atm_batch=None, dim_size=None):
+        h_pooled = self.pooling(h_atm, atm_batch, dim_size=dim_size)
         return self.decoder(h_pooled)
 
 

@@ -4,7 +4,7 @@ from typing import Optional, Tuple, Union
 import torch
 from torch import Tensor
 from torch_geometric.data import Data
-from torch_geometric.utils import coalesce, to_undirected, sort_edge_index, degree
+from torch_geometric.utils import to_undirected, sort_edge_index, degree
 
 from fairchem.core.graph.radius_graph_pbc import radius_graph_pbc_v2 as radius_graph_pbc
 from fairchem.core.graph.compute import get_pbc_distances
@@ -80,12 +80,14 @@ class AtomsData(Data):
             self.properties = self.properties[0]
             if hasattr(self, 'pbc'):
                 self.pbc = self.pbc[:3]
+        # 单次计算 if_pbc 布尔量, 避免下方多处重复构造 tensor
+        is_pbc = bool(torch.all(torch.as_tensor(self.if_pbc)))
         """
         ------------------PML层拓扑结构-------------------
         当实际可能的邻居数大于max_num_neighbors时, 生成的bond_index可能是单向的, 这在后续计算中会报错。
         因此在检查结束后再无向化处理
         """
-        if torch.all(torch.as_tensor(self.if_pbc)):
+        if is_pbc:
             (bond_index, cell_offset, _) = radius_graph_pbc(data=self, 
                                                             radius=pml_rcut, 
                                                             max_num_neighbors_threshold=pml_mnn,
@@ -114,7 +116,7 @@ class AtomsData(Data):
         
         
         # 计算位置对齐的符号
-        if torch.all(torch.as_tensor(self.if_pbc)):
+        if is_pbc:
             self.bond2angle_AliSign = Sign(bond_index_reo_bias, self.angle_index_reo).AlignmentSign()
         else:
             self.bond2angle_AliSign = Sign(self.bond_index_reo, self.angle_index_reo).AlignmentSign()
@@ -124,7 +126,7 @@ class AtomsData(Data):
         """
         ------------------IML层拓扑结构-------------------
         """
-        if torch.all(torch.as_tensor(self.if_pbc)):
+        if is_pbc:
             (bondI_index, cell_offset_I, _) = radius_graph_pbc(data=self, 
                                                                 radius=iml_rcut, 
                                                                 max_num_neighbors_threshold=iml_mnn,
@@ -137,6 +139,11 @@ class AtomsData(Data):
             
         # 计算映射关系
         self._calc_map()
+        
+        # 预存批内图数量(标量), 供 decoder 池化作为常量 dim_size 使用。
+        # 在预处理阶段计算(非 torch.compile 图内), 避免 forward 图内的
+        # unique()/item() 触发 graph break。
+        self.n_graphs = int(self.atom_batch.max()) + 1
         
         
     def update_geo(self) -> None:
@@ -191,7 +198,8 @@ class AtomsData(Data):
         计算键长和键向量
         """
         self.bond_batch = self.atom_batch[self.bond_index_reo[0]]
-        if torch.all(torch.as_tensor(self.if_pbc)):
+        is_pbc = bool(torch.all(torch.as_tensor(self.if_pbc)))
+        if is_pbc:
             cell_neighbors = degree(self.bond_batch).long()
             out = get_pbc_distances(self.pos, self.bond_index_reo.flip(0), self.cell, self.cell_offset_reo, cell_neighbors, False, True)
             _, self.BondLength_reo, BondVec_reo = out.values()
@@ -202,7 +210,7 @@ class AtomsData(Data):
         self.BondVec_reo_uni = BondVec_reo / (self.BondLength_reo + self.EPS)
         
         self.bondI_batch = self.atom_batch[self.bondI_index_reo[0]]
-        if torch.all(torch.as_tensor(self.if_pbc)):
+        if is_pbc:
             cell_neighbors_I = degree(self.bondI_batch).long()
             out = get_pbc_distances(self.pos, self.bondI_index_reo, self.cell, self.cell_offset_I_reo, cell_neighbors_I, False, True)
             _, self.BondLengthI_reo, BondIVec_reo = out.values()
@@ -341,7 +349,7 @@ class AtomsData(Data):
         
         if offsets.dim() == 1:
             if torch.all(offsets == 0):
-                magnif = torch.tensor(0, device=self.device)
+                magnif = torch.tensor(0, device=offsets.device)
             else:
                 shift = offsets + max_offset
                 magnif = (shift[0] * base**2 + shift[1] * base + shift[2] + 1).long()

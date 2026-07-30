@@ -1,22 +1,13 @@
-import ast
-import json
-import time
-
 import numpy as np
-import pandas as pd
 from joblib import Parallel, delayed
-import multiprocessing
 
-from ase.data import atomic_numbers
 from ase import Atoms
 from torch_geometric.loader import DataLoader
 
 import torch
 import tqdm
-from scipy.spatial import distance_matrix
 from scipy.sparse.csgraph import connected_components
 from scipy.sparse import csr_matrix
-from torch_geometric.data import Dataset, InMemoryDataset
 
 from .Atoms import AtomsData
 
@@ -31,7 +22,9 @@ def _check_SimplyConnected(pos, r_cut):
     dm = torch.cdist(pos_tensor, pos_tensor)
     
     threshold = r_cut
-    adjacency_matrix = (dm <= threshold).int() - torch.eye(len(pos), dtype=torch.int, device=device)
+    adjacency_matrix = (dm <= threshold)
+    adjacency_matrix.fill_diagonal_(False)  # 原地去自环, 避免额外分配 torch.eye(N)
+    adjacency_matrix = adjacency_matrix.int()
     
     adjacency_matrix_np = adjacency_matrix.cpu().numpy()
     sparse_adjacency_matrix = csr_matrix(adjacency_matrix_np)

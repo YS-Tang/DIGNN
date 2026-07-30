@@ -7,7 +7,6 @@ from ..utils import MLP
 
 # Typing
 from torch import Tensor
-from typing import List, Optional, Tuple
 
 class GatedGCN_origin(MessagePassing):
     """Gated GCN, also known as edge-gated convolution.

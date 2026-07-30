@@ -278,7 +278,12 @@ def _segmented_argsort(
     segment_ids: torch.Tensor, 
     descending: bool = False
 ) -> torch.Tensor:
-    """分段排序（优化数值稳定性）
+    """分段排序（数值稳定版）
+    
+    先按 data 全局排序得到稳定顺序, 再按 segment_ids 做一次稳定排序,
+    利用 torch.sort(stable=True) 保证同一段内保持 data 的相对次序。
+    相比旧的 `data + offset*scaling` 浮点缩放键, 避免了大图/大 offset
+    下浮点尾数不足导致的段间键重叠与排序错乱。
     
     Args:
         data: 待排序数据 [E,]
@@ -288,13 +293,9 @@ def _segmented_argsort(
     Returns:
         排序后的全局索引 [E,]
     """
-    # 生成分段偏移
-    unique_segments, inverse, counts = torch.unique(
-        segment_ids, return_inverse=True, return_counts=True)
-    offset = torch.cat([torch.zeros(1, device=data.device), counts.cumsum(0)[:-1]])
-
-    # 计算稳定的排序键
-    scaling = data.max() - data.min() + 1e-6  # 防零除
-    sort_key = data + offset[inverse] * scaling  # 确保跨段不重叠
-
-    return sort_key.argsort(descending=descending)
+    # 第一次: 按数值排序 (稳定)
+    order_data = torch.argsort(data, stable=True, descending=descending)
+    # 第二次: 按段 id 稳定排序, 同段内保留上一步的数值顺序
+    seg_sorted = segment_ids[order_data]
+    order_seg = torch.argsort(seg_sorted, stable=True)
+    return order_data[order_seg]

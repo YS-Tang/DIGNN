@@ -129,21 +129,24 @@ class LCP(nn.Module):
                 h_bndI: torch.Tensor,
                 edge_index_bndI: torch.Tensor,
                 index_bondI_map,
-                atom_batch: torch.Tensor = None) -> torch.Tensor:
+                atom_batch: torch.Tensor = None,
+                n_graphs: int = None) -> torch.Tensor:
         """IML 层前向传播。
 
         若 use_global_token=True, 则在每个局域交互 IML 层后插入一次全局 virtual node 交互,
         使各局域信息团通过 virtual node 交换全局信息(与 LCP “大范围局域交互”目标一致)。
+        n_graphs 由预处理阶段预存的常量(data.n_graphs)传入, 避免图内 int(atom_batch.max())
+        触发 Tensor.item() 的 graph break; 未传入时在 GlobalInteraction 内部回退计算。
         """
         if self.iml_node_only:
             for idx, atm_bnd_iml in enumerate(self.atm_bnd_imls):
                 h_atm = atm_bnd_iml(h_atm, edge_index_bndI, h_bndI[index_bondI_map])
                 if self.global_layers is not None:
-                    h_atm = self.global_layers[idx](h_atm, atom_batch)
+                    h_atm = self.global_layers[idx](h_atm, atom_batch, n_graphs)
         else:
             for idx, atm_bnd_iml in enumerate(self.atm_bnd_imls):
                 h_atm, h_bndI_cplt = atm_bnd_iml(h_atm, edge_index_bndI, h_bndI[index_bondI_map])
                 h_bndI = scatter(h_bndI_cplt, index_bondI_map, dim=0, reduce='mean', dim_size=h_bndI.shape[0])
                 if self.global_layers is not None:
-                    h_atm = self.global_layers[idx](h_atm, atom_batch)
+                    h_atm = self.global_layers[idx](h_atm, atom_batch, n_graphs)
         return h_atm

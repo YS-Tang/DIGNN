@@ -24,7 +24,7 @@ class DIGNN(nn.Module):
         p_atm = self.processor(e_atm, e_bnd, e_ang, e_dih, e_bndI, 
                                 edge_index_bnd, edge_index_ang, edge_index_dih, edge_index_bndI,
                                 index_angle_map, index_bond_map, index_dih_map, index_bondI_map,
-                                atom_batch
+                                atom_batch, n_graphs
                                 )
         d_atm = self.decoder(p_atm, atom_batch, dim_size=n_graphs)
         return d_atm

@@ -89,7 +89,8 @@ class BaseProcessor(ABC, nn.Module):
                 index_bond_map, 
                 index_dih_map,
                 index_bondI_map,
-                atom_batch=None) -> torch.Tensor:
+                atom_batch=None,
+                n_graphs=None) -> torch.Tensor:
         """前向传播
         
         Args:
@@ -119,7 +120,7 @@ class BaseProcessor(ABC, nn.Module):
                                   edge_index_bnd, edge_index_ang, edge_index_dih,
                                   index_bond_map, index_ang_map, index_dih_map)
         
-        h_atm = self._iml_forward(h_atm, h_bndI, edge_index_bndI, index_bondI_map, atom_batch)
+        h_atm = self._iml_forward(h_atm, h_bndI, edge_index_bndI, index_bondI_map, atom_batch, n_graphs)
         
         return h_atm
     
@@ -143,8 +144,9 @@ class BaseProcessor(ABC, nn.Module):
                    h_bndI: torch.Tensor,
                    edge_index_bndI: torch.Tensor,
                    index_bondI_map,
-                   atom_batch=None) -> torch.Tensor:
-        return self.lcp(h_atm, h_bndI, edge_index_bndI, index_bondI_map, atom_batch)
+                   atom_batch=None,
+                   n_graphs=None) -> torch.Tensor:
+        return self.lcp(h_atm, h_bndI, edge_index_bndI, index_bondI_map, atom_batch, n_graphs)
 
 
 

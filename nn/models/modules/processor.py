@@ -25,7 +25,8 @@ class BaseProcessor(ABC, nn.Module):
                  dropout: float = 0.0,
                  init_nn_layer: int=3,
                  use_global_token: bool = False,
-                 num_global_tokens: int = 1):
+                 num_global_tokens: int = 1,
+                 global_gate_init: float = 0.1):
         super().__init__()
         self.pml = pml
         self.iml = iml
@@ -34,6 +35,7 @@ class BaseProcessor(ABC, nn.Module):
         self.atom_dim = atom_dim
         self.use_global_token = use_global_token
         self.num_global_tokens = num_global_tokens
+        self.global_gate_init = global_gate_init
         
         self._init_feature_nns(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, init_nn_layer)
         self.pml_node_only = None
@@ -71,7 +73,7 @@ class BaseProcessor(ABC, nn.Module):
         self.hgc = HGC(self.atm_bnd_pmls, self.bnd_ang_pmls, self.ang_dih_pmls, self.pml_node_only)
         self.lcp = LCP(self.atm_bnd_imls, self.iml_node_only,
                        use_global_token=self.use_global_token, atom_dim=self.atom_dim,
-                       num_tokens=self.num_global_tokens)
+                       num_tokens=self.num_global_tokens, gate_init=self.global_gate_init)
         
     def forward(self,
                 h_atm: torch.Tensor, # reorgnization数据
@@ -165,8 +167,9 @@ class GCN_Processor(BaseProcessor):
                  bondI_dim: int = 32,
                  init_nn_layer: int = 3,
                  use_global_token: bool = False,
-                 num_global_tokens: int = 1):
-        super().__init__(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, pml, iml, residual, dropout, init_nn_layer, use_global_token, num_global_tokens)
+                 num_global_tokens: int = 1,
+                 global_gate_init: float = 0.1):
+        super().__init__(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, pml, iml, residual, dropout, init_nn_layer, use_global_token, num_global_tokens, global_gate_init)
         
         self.pml_node_only = False
         self.iml_node_only = False
@@ -207,8 +210,9 @@ class GINE_Processor(BaseProcessor):
                  gin_nn: List[int] = [64, 128, 64],
                  init_nn_layer: int = 3,
                  use_global_token: bool = False,
-                 num_global_tokens: int = 1):
-        super().__init__(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, pml, iml, residual, dropout, init_nn_layer, use_global_token, num_global_tokens)
+                 num_global_tokens: int = 1,
+                 global_gate_init: float = 0.1):
+        super().__init__(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, pml, iml, residual, dropout, init_nn_layer, use_global_token, num_global_tokens, global_gate_init)
         
         self.pml_node_only = False
         self.iml_node_only = True
@@ -257,8 +261,9 @@ class GATv2_Processor(BaseProcessor):
                  gat_heads: int = 1,
                  init_nn_layer: int = 3,
                  use_global_token: bool = False,
-                 num_global_tokens: int = 1):
-        super().__init__(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, pml, iml, residual, dropout, init_nn_layer, use_global_token, num_global_tokens)
+                 num_global_tokens: int = 1,
+                 global_gate_init: float = 0.1):
+        super().__init__(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, pml, iml, residual, dropout, init_nn_layer, use_global_token, num_global_tokens, global_gate_init)
         
         self.pml_node_only = False
         self.iml_node_only = True
@@ -313,8 +318,9 @@ class EGAT_Processor(BaseProcessor):
                  egat_fc_layers: int = 2,
                  init_nn_layer: int = 3,
                  use_global_token: bool = False,
-                 num_global_tokens: int = 1):
-        super().__init__(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, pml, iml, residual, dropout, init_nn_layer, use_global_token, num_global_tokens)
+                 num_global_tokens: int = 1,
+                 global_gate_init: float = 0.1):
+        super().__init__(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, pml, iml, residual, dropout, init_nn_layer, use_global_token, num_global_tokens, global_gate_init)
         
         self.pml_node_only = False
         self.iml_node_only = False

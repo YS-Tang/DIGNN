@@ -20,7 +20,7 @@ class GlobalInteraction(nn.Module):
     5. 残差式注入, 初始近似恒等, 对现有行为扰动最小。复杂度 O(N), 兼容 PBC。
     """
 
-    def __init__(self, dim: int, num_tokens: int = 1):
+    def __init__(self, dim: int, num_tokens: int = 1, gate_init: float = 0.1):
         super().__init__()
         self.dim = dim
         self.num_tokens = num_tokens
@@ -30,10 +30,11 @@ class GlobalInteraction(nn.Module):
         # 将(原子特征, 拼接的各 token 全局特征)融合为每个原子的更新量
         self.update = MLP([dim * (1 + num_tokens), dim, dim], act=nn.SiLU())
         self.norm = nn.LayerNorm(dim)
-        # ReZero 门控: 初始为 0, 使模块初始严格恒等(与不加 global 数值完全相同),
-        # 训练中 gate 从 0 缓慢自主增长, 按需平滑引入全局信息, 避免初始大扰动破坏
-        # 已调好的局部主干, 显著改善 loss 稳定性。
-        self.gate = nn.Parameter(torch.zeros(1))
+        # LayerScale 式门控: 初始为小正值 gate_init(而非纯 ReZero 的 0)。
+        # gate_init=0 时为严格恒等但会压制模块自身梯度导致欠训练/收敛变差;
+        # 小正值(如 0.1)既保初始扰动较小(稳定), 又避免梯度被压死(保收敛),
+        # 是 CaiT/LayerScale 验证的更优折中。
+        self.gate = nn.Parameter(torch.full((1,), float(gate_init)))
 
     def forward(self, h_atm: torch.Tensor, atom_batch: torch.Tensor,
                 num_graphs: int = None) -> torch.Tensor:
@@ -114,7 +115,8 @@ class LCP(nn.Module):
                  iml_node_only: bool = False,
                  use_global_token: bool = False,
                  atom_dim: int = None,
-                 num_tokens: int = 1):
+                 num_tokens: int = 1,
+                 gate_init: float = 0.1):
         super().__init__()
         self.atm_bnd_imls = atm_bnd_imls
         self.iml_node_only = iml_node_only
@@ -123,7 +125,8 @@ class LCP(nn.Module):
         if use_global_token:
             assert atom_dim is not None, "use_global_token 时必须提供 atom_dim"
             self.global_layers = nn.ModuleList([
-                GlobalInteraction(atom_dim, num_tokens=num_tokens) for _ in range(len(atm_bnd_imls))
+                GlobalInteraction(atom_dim, num_tokens=num_tokens, gate_init=gate_init)
+                for _ in range(len(atm_bnd_imls))
             ])
         else:
             self.global_layers = None

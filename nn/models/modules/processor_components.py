@@ -30,6 +30,10 @@ class GlobalInteraction(nn.Module):
         # 将(原子特征, 拼接的各 token 全局特征)融合为每个原子的更新量
         self.update = MLP([dim * (1 + num_tokens), dim, dim], act=nn.SiLU())
         self.norm = nn.LayerNorm(dim)
+        # ReZero 门控: 初始为 0, 使模块初始严格恒等(与不加 global 数值完全相同),
+        # 训练中 gate 从 0 缓慢自主增长, 按需平滑引入全局信息, 避免初始大扰动破坏
+        # 已调好的局部主干, 显著改善 loss 稳定性。
+        self.gate = nn.Parameter(torch.zeros(1))
 
     def forward(self, h_atm: torch.Tensor, atom_batch: torch.Tensor,
                 num_graphs: int = None) -> torch.Tensor:
@@ -50,7 +54,7 @@ class GlobalInteraction(nn.Module):
         g = scatter(weighted, atom_batch, dim=0, dim_size=num_graphs, reduce='sum')
         g_broadcast = g[atom_batch].reshape(N, self.num_tokens * self.dim)  # 广播回原子
         delta = self.update(torch.cat([h_atm, g_broadcast], dim=-1))
-        return h_atm + self.norm(delta)                                  # 残差注入
+        return h_atm + self.gate * self.norm(delta)                      # ReZero 门控残差注入
 
 
 class HGC(nn.Module):

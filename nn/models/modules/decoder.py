@@ -146,7 +146,7 @@ class PoolingModule(nn.Module):
 
 class Decoder(nn.Module):
     def __init__(self, dim: List[int], reduce_method='mean', batch_norm=False, dropout=0.0,
-                 use_les: bool = False, les_n_k: int = 16,
+                 les_n_k: int = 0,
                  les_lam_min: float = 3.0, les_lam_max: float = 15.0,
                  les_sigma: float = 1.0, les_charge_neutral: bool = True,
                  les_use_reciprocal: bool = False, les_n_max: int = 2,
@@ -156,14 +156,14 @@ class Decoder(nn.Module):
         self.dim = dim
         self.pooling = PoolingModule(reduce_method=reduce_method)
         self.decoder = MLP(dim, act=nn.SiLU(), batch_norm=batch_norm, dropout=dropout)
-        # LES 长程能量项(可开关)。les_gate 初始 0 -> 严格退化到无 LES 的原输出;
+        # LES 长程能量项由 les_n_k>0 开启(取代原 use_les 布尔)。les_gate 初始 0 -> 严格退化;
         # 能量为广延量, 若 label 是每原子(reduce_method='mean'), 则 E_lr 需除以图原子数保量纲一致。
-        self.use_les = use_les
-        if use_les:
+        self.use_les = les_n_k > 0
+        if self.use_les:
             # LES 是广延量的静电长程能量项, 仅对能量/广延标量有物理意义;
             # 输出维度须为 1(单能量通道)。用于强度量(带隙/模量)会破坏物理含义。
             assert dim[-1] == 1, (
-                f"use_les 仅适用于单通道能量输出(dim[-1]==1), 当前 dim[-1]={dim[-1]}; "
+                f"les_n_k>0 仅适用于单通道能量输出(dim[-1]==1), 当前 dim[-1]={dim[-1]}; "
                 "LES 是广延能量项, 不应用于多目标或强度量任务。"
             )
             self.les = LatentEwald(atom_dim=dim[0], n_k=les_n_k,

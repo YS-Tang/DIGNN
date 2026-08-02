@@ -38,14 +38,14 @@ def _two_cells(n_graph=2):
 def test_global_no_phase_pos_agnostic():
     """use_phase=False: 传不传 pos 输出一致(纯 mean-field, 不依赖坐标)。"""
     h, ab, pos, N, G = _toy_batch()
-    m = GlobalInteraction(16, num_tokens=2, use_phase=False)
+    m = GlobalInteraction(16, num_tokens=2, n_k=0)
     assert torch.allclose(m(h, ab, G), m(h, ab, G, pos), atol=1e-6)
 
 
 def test_phase_gate0_degenerates():
     """gate_phi=0 时相位路输出为0, 与非0结果不同(证明相位路可生效且可严格退化)。"""
     h, ab, pos, N, G = _toy_batch()
-    m = GlobalInteraction(16, num_tokens=2, use_phase=True, n_k=4)
+    m = GlobalInteraction(16, num_tokens=2, n_k=4)
     with torch.no_grad():
         m.gate_phi.fill_(0.0)
     out0 = m(h, ab, G, pos)
@@ -58,7 +58,7 @@ def test_phase_gate0_degenerates():
 def test_phase_iso_translation_invariant():
     """各向同性相位版整体平移不变。"""
     h, ab, pos, N, G = _toy_batch()
-    m = GlobalInteraction(16, num_tokens=2, use_phase=True, n_k=4)
+    m = GlobalInteraction(16, num_tokens=2, n_k=4)
     shift = torch.tensor([1.3, -2.7, 0.8])
     assert torch.allclose(m(h, ab, G, pos), m(h, ab, G, pos + shift), atol=1e-4)
 
@@ -70,7 +70,7 @@ def test_phase_recip_lattice_invariant():
     pos = torch.rand(N, 3)
     pos[:6] = pos[:6] @ cell0
     pos[6:] = pos[6:] @ cell1
-    m = GlobalInteraction(16, num_tokens=2, use_phase=True, use_reciprocal=True, n_max=2)
+    m = GlobalInteraction(16, num_tokens=2, n_k=1, use_reciprocal=True, n_max=2)
     out = m(h, ab, G, pos, cell)
     pos_lat = pos.clone()
     pos_lat[0] = pos_lat[0] + cell0[0]
@@ -86,7 +86,7 @@ def test_phase_recip_second_order_grad():
     pos[:6] = pos[:6] @ cell0
     pos[6:] = pos[6:] @ cell1
     pos = pos.requires_grad_(True)
-    m = GlobalInteraction(16, num_tokens=2, use_phase=True, use_reciprocal=True, n_max=2)
+    m = GlobalInteraction(16, num_tokens=2, n_k=1, use_reciprocal=True, n_max=2)
     energy = m(h, ab, G, pos, cell).sum()
     force = -torch.autograd.grad(energy, pos, create_graph=True)[0]
     (force ** 2).sum().backward()
@@ -105,8 +105,8 @@ def test_les_gate0_degenerates():
     """les_gate=0 时 Decoder 输出等于无 LES 的纯 decoder(严格退化)。"""
     h, ab, pos, N, G = _toy_batch(dim=32)
     dim = [32, 16, 1]
-    dec = Decoder(dim, reduce_method='mean', use_les=True, les_n_k=16, les_gate_init=0.0)
-    dec_off = Decoder(dim, reduce_method='mean', use_les=False)
+    dec = Decoder(dim, reduce_method='mean', les_n_k=16, les_gate_init=0.0)
+    dec_off = Decoder(dim, reduce_method='mean', les_n_k=0)
     dec_off.decoder.load_state_dict(dec.decoder.state_dict())
     assert torch.allclose(dec(h, ab, dim_size=G, pos=pos),
                           dec_off(h, ab, dim_size=G, pos=pos), atol=1e-6)

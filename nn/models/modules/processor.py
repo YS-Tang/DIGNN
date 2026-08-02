@@ -24,11 +24,9 @@ class BaseProcessor(ABC, nn.Module):
                  residual: bool = True,
                  dropout: float = 0.0,
                  init_nn_layer: int=3,
-                 use_global_token: bool = False,
-                 num_global_tokens: int = 1,
+                 num_global_tokens: int = 0,
                  global_gate_init: float = 0.1,
-                 use_phase: bool = False,
-                 n_k: int = 4,
+                 n_k: int = 0,
                  lam_min: float = 3.0,
                  lam_max: float = 15.0,
                  gate_phi_init: float = 0.2,
@@ -40,10 +38,8 @@ class BaseProcessor(ABC, nn.Module):
         self.residual = residual
         self.dropout = dropout
         self.atom_dim = atom_dim
-        self.use_global_token = use_global_token
         self.num_global_tokens = num_global_tokens
         self.global_gate_init = global_gate_init
-        self.use_phase = use_phase
         self.n_k = n_k
         self.lam_min = lam_min
         self.lam_max = lam_max
@@ -86,9 +82,9 @@ class BaseProcessor(ABC, nn.Module):
     def _init_processor_components(self):
         self.hgc = HGC(self.atm_bnd_pmls, self.bnd_ang_pmls, self.ang_dih_pmls, self.pml_node_only)
         self.lcp = LCP(self.atm_bnd_imls, self.iml_node_only,
-                       use_global_token=self.use_global_token, atom_dim=self.atom_dim,
+                       atom_dim=self.atom_dim,
                        num_tokens=self.num_global_tokens, gate_init=self.global_gate_init,
-                       use_phase=self.use_phase, n_k=self.n_k,
+                       n_k=self.n_k,
                        lam_min=self.lam_min, lam_max=self.lam_max,
                        gate_phi_init=self.gate_phi_init,
                        use_reciprocal=self.phase_use_reciprocal, n_max=self.phase_n_max)
@@ -188,17 +184,15 @@ class GCN_Processor(BaseProcessor):
                  dropout: float = 0.0,
                  bondI_dim: int = 32,
                  init_nn_layer: int = 3,
-                 use_global_token: bool = False,
-                 num_global_tokens: int = 1,
+                 num_global_tokens: int = 0,
                  global_gate_init: float = 0.1,
-                 use_phase: bool = False,
-                 n_k: int = 4,
+                 n_k: int = 0,
                  lam_min: float = 3.0,
                  lam_max: float = 15.0,
                  gate_phi_init: float = 0.2,
                  phase_use_reciprocal: bool = False,
                  phase_n_max: int = 2):
-        super().__init__(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, pml, iml, residual, dropout, init_nn_layer, use_global_token, num_global_tokens, global_gate_init, use_phase, n_k, lam_min, lam_max, gate_phi_init, phase_use_reciprocal, phase_n_max)
+        super().__init__(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, pml, iml, residual, dropout, init_nn_layer, num_global_tokens, global_gate_init, n_k, lam_min, lam_max, gate_phi_init, phase_use_reciprocal, phase_n_max)
         
         self.pml_node_only = False
         self.iml_node_only = False
@@ -238,17 +232,15 @@ class GINE_Processor(BaseProcessor):
                  bondI_dim: int = 32,
                  gin_nn: List[int] = [64, 128, 64],
                  init_nn_layer: int = 3,
-                 use_global_token: bool = False,
-                 num_global_tokens: int = 1,
+                 num_global_tokens: int = 0,
                  global_gate_init: float = 0.1,
-                 use_phase: bool = False,
-                 n_k: int = 4,
+                 n_k: int = 0,
                  lam_min: float = 3.0,
                  lam_max: float = 15.0,
                  gate_phi_init: float = 0.2,
                  phase_use_reciprocal: bool = False,
                  phase_n_max: int = 2):
-        super().__init__(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, pml, iml, residual, dropout, init_nn_layer, use_global_token, num_global_tokens, global_gate_init, use_phase, n_k, lam_min, lam_max, gate_phi_init, phase_use_reciprocal, phase_n_max)
+        super().__init__(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, pml, iml, residual, dropout, init_nn_layer, num_global_tokens, global_gate_init, n_k, lam_min, lam_max, gate_phi_init, phase_use_reciprocal, phase_n_max)
         
         self.pml_node_only = False
         self.iml_node_only = True
@@ -296,17 +288,15 @@ class GATv2_Processor(BaseProcessor):
                  bondI_dim: int = 32,
                  gat_heads: int = 1,
                  init_nn_layer: int = 3,
-                 use_global_token: bool = False,
-                 num_global_tokens: int = 1,
+                 num_global_tokens: int = 0,
                  global_gate_init: float = 0.1,
-                 use_phase: bool = False,
-                 n_k: int = 4,
+                 n_k: int = 0,
                  lam_min: float = 3.0,
                  lam_max: float = 15.0,
                  gate_phi_init: float = 0.2,
                  phase_use_reciprocal: bool = False,
                  phase_n_max: int = 2):
-        super().__init__(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, pml, iml, residual, dropout, init_nn_layer, use_global_token, num_global_tokens, global_gate_init, use_phase, n_k, lam_min, lam_max, gate_phi_init, phase_use_reciprocal, phase_n_max)
+        super().__init__(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, pml, iml, residual, dropout, init_nn_layer, num_global_tokens, global_gate_init, n_k, lam_min, lam_max, gate_phi_init, phase_use_reciprocal, phase_n_max)
         
         self.pml_node_only = False
         self.iml_node_only = True
@@ -360,17 +350,15 @@ class EGAT_Processor(BaseProcessor):
                  egat_heads: int = 4,
                  egat_fc_layers: int = 2,
                  init_nn_layer: int = 3,
-                 use_global_token: bool = False,
-                 num_global_tokens: int = 1,
+                 num_global_tokens: int = 0,
                  global_gate_init: float = 0.1,
-                 use_phase: bool = False,
-                 n_k: int = 4,
+                 n_k: int = 0,
                  lam_min: float = 3.0,
                  lam_max: float = 15.0,
                  gate_phi_init: float = 0.2,
                  phase_use_reciprocal: bool = False,
                  phase_n_max: int = 2):
-        super().__init__(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, pml, iml, residual, dropout, init_nn_layer, use_global_token, num_global_tokens, global_gate_init, use_phase, n_k, lam_min, lam_max, gate_phi_init, phase_use_reciprocal, phase_n_max)
+        super().__init__(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, pml, iml, residual, dropout, init_nn_layer, num_global_tokens, global_gate_init, n_k, lam_min, lam_max, gate_phi_init, phase_use_reciprocal, phase_n_max)
         
         self.pml_node_only = False
         self.iml_node_only = False

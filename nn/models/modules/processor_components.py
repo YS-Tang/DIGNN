@@ -70,13 +70,15 @@ class GlobalInteraction(nn.Module):
     """
 
     def __init__(self, dim: int, num_tokens: int = 1, gate_init: float = 0.1,
-                 use_phase: bool = False, n_k: int = 4,
+                 n_k: int = 0,
                  lam_min: float = 3.0, lam_max: float = 15.0,
                  gate_phi_init: float = 0.2,
                  use_reciprocal: bool = False, n_max: int = 2):
         super().__init__()
         self.dim = dim
         self.num_tokens = num_tokens
+        # 相位分支由 n_k>0 开启(取代原 use_phase 布尔): n_k=0 即关闭, 退化为纯 mean-field。
+        use_phase = n_k > 0
         self.use_phase = use_phase
         self.use_reciprocal = use_reciprocal
         # 每个 token 的可学习查询向量(决定它关注哪些原子) 与独立 value 变换
@@ -242,12 +244,10 @@ class LCP(nn.Module):
     def __init__(self,
                  atm_bnd_imls: nn.ModuleList,
                  iml_node_only: bool = False,
-                 use_global_token: bool = False,
                  atom_dim: int = None,
-                 num_tokens: int = 1,
+                 num_tokens: int = 0,
                  gate_init: float = 0.1,
-                 use_phase: bool = False,
-                 n_k: int = 4,
+                 n_k: int = 0,
                  lam_min: float = 3.0,
                  lam_max: float = 15.0,
                  gate_phi_init: float = 0.2,
@@ -256,13 +256,14 @@ class LCP(nn.Module):
         super().__init__()
         self.atm_bnd_imls = atm_bnd_imls
         self.iml_node_only = iml_node_only
-        self.use_global_token = use_global_token
-        # 每个 IML 层后搭配一个全局交互层(可开关); 关闭时与原 LCP 完全等价。
-        if use_global_token:
-            assert atom_dim is not None, "use_global_token 时必须提供 atom_dim"
+        # 全局模块由 num_tokens>0 开启(取代原 use_global_token 布尔); =0 时与原 LCP 完全等价。
+        self.use_global_token = num_tokens > 0
+        # 每个 IML 层后搭配一个全局交互层(可开关)。
+        if self.use_global_token:
+            assert atom_dim is not None, "num_tokens>0 时必须提供 atom_dim"
             self.global_layers = nn.ModuleList([
                 GlobalInteraction(atom_dim, num_tokens=num_tokens, gate_init=gate_init,
-                                  use_phase=use_phase, n_k=n_k,
+                                  n_k=n_k,
                                   lam_min=lam_min, lam_max=lam_max,
                                   gate_phi_init=gate_phi_init,
                                   use_reciprocal=use_reciprocal, n_max=n_max)

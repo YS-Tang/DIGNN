@@ -24,16 +24,15 @@ from joblib import Parallel, delayed
 HP_atomsdata = {"pml_rcut": 5.0, "pml_mnn": 4, "iml_rcut": 10.0, "iml_mnn": 8} # HP指hyperparams
 HP_feat_dim = {'atom_dim': 64, 'bond_dim': 64, 'ang_dim': 32, 'dih_dim': 16}
 HP_nn = {'init': 1, 'pml': 1, 'iml': 4, 'decoder': [32,1], 'pooling': 'mean',
-         # ===== 长程/全局增强开关(消融验证后的晶体推荐配置) =====
-         # 详见 docs/长程全局增强方法说明.md。晶体能量任务推荐: global + phase(recip,n_max=1)。
-         # 若要复现原始 baseline, 将下方 use_global_token/use_phase 置 False 即可。
-         'use_global_token': True, 'num_global_tokens': 2,
-         # 相位 token: 需 use_global_token=True 方生效。晶体用倒格矢(recip)优于各向同性;
-         # phase_use_reciprocal=True 时 n_k 被倒格矢数量(由 phase_n_max 决定)覆盖, n_max=1 -> 3个k。
-         'use_phase': True, 'phase_n_k': 4,
+         # 长程/全局增强: “数量>0 即开启”约定(无需单独布尔开关)。num_global_tokens=0 即关闭全局模块。
+         # 详见 docs/长程全局增强方法说明.md; 晶体能量任务推荐 global + phase(recip,n_max=1)。
+         'num_global_tokens': 2,
+         # 相位 token(需 num_global_tokens>0 方生效)。晶体用倒格矢(recip)优于各向同性;
+         # phase_use_reciprocal=True 时 phase_n_k 被倒格矢数量(由 phase_n_max 决定)覆盖, n_max=1 -> 3个k。
+         'phase_n_k': 4,
          'phase_use_reciprocal': True, 'phase_n_max': 1,
-         # LES 长程能量项(Decoder 内): 消融证伪(小数据无力监督下发散), 默认关。
-         'use_les': False, 'les_n_k': 16,
+         # LES 长程能量项(Decoder 内): 消融证伪(小数据无力监督下发散), 默认 les_n_k=0 关闭。
+         'les_n_k': 0,
          'les_use_reciprocal': False, 'les_n_max': 2}
 HP_train = {'batch_size': 4, 'max_epochs': 10, 'lr': 1e-3, 'adamw_weight_decay': 1e-3,
             'adamw_betas': (0.9, 0.999), '1cycle_final_div_factor': 1e+5, 'gradient_clip_val': 1.0}
@@ -113,9 +112,7 @@ model = dgm.DIGNN(encoder=dgm.Encoder(num_species=data.mapper.num_embeddings,
                                             dropout=0.0,
                                             bondI_dim=HP_feat_dim['bond_dim'],
                                             init_nn_layer=HP_nn['init'],
-                                            use_global_token=HP_nn['use_global_token'],
                                             num_global_tokens=HP_nn['num_global_tokens'],
-                                            use_phase=HP_nn['use_phase'],
                                             n_k=HP_nn['phase_n_k'],
                                             phase_use_reciprocal=HP_nn['phase_use_reciprocal'],
                                             phase_n_max=HP_nn['phase_n_max'],
@@ -123,7 +120,6 @@ model = dgm.DIGNN(encoder=dgm.Encoder(num_species=data.mapper.num_embeddings,
                 decoder=dgm.Decoder(dim=[HP_feat_dim['atom_dim']] + HP_nn['decoder'],
                                     reduce_method=HP_nn['pooling'],
                                     dropout=0.0,
-                                    use_les=HP_nn['use_les'],
                                     les_n_k=HP_nn['les_n_k'],
                                     les_use_reciprocal=HP_nn['les_use_reciprocal'],
                                     les_n_max=HP_nn['les_n_max']),
@@ -137,10 +133,10 @@ tb_logger.log_hyperparams({**HP_atomsdata,
                             'decoder':HP_nn['decoder'],  
                             'init_nn_layer':HP_nn['init'],
                             'pooling':HP_nn['pooling'],
-                            'use_global_token':HP_nn['use_global_token'],
                             'num_global_tokens':HP_nn['num_global_tokens'],
-                            'use_phase':HP_nn['use_phase'],
-                            'use_les':HP_nn['use_les'],
+                            'phase_n_k':HP_nn['phase_n_k'],
+                            'phase_use_reciprocal':HP_nn['phase_use_reciprocal'],
+                            'les_n_k':HP_nn['les_n_k'],
                             **HP_train,
                             })
 

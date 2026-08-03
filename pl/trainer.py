@@ -23,11 +23,15 @@ class TrainModule(pl.LightningModule):
                 empty_cache_every_epoch: bool = False,
                 test_prefix: str = '',
                 enable_embed_decay: bool = True,
+                compile_dynamic: bool = True,
                 ):
         super().__init__()
         self.model = model
         if compile_model:
-            self.model = torch.compile(self.model)
+            # DIGNN 每个 batch 原子/键/角数不同=动态形状。默认(dynamic=None)会为每种
+            # 形状重编译, 叠加 train/val 交替的 grad_mode 切换, 极易打满 recompile_limit(8);
+            # dynamic=True 让编译图数降为 1(与力场训练经验一致), 根治重编译。
+            self.model = torch.compile(self.model, dynamic=compile_dynamic)
         self.lr = lr
         self.adamw_weight_decay = adamw_weight_decay
         self.adamw_betas = adamw_betas

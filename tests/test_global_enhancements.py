@@ -156,6 +156,30 @@ def test_les_reciprocal_lattice_invariant():
     assert torch.allclose(out, les(h, pos_lat, ab, G, cell), atol=1e-3)
 
 
+def test_phase_basis_precompute_equivalence():
+    """跨层预计算等价性: 传入预算 phase_basis 与当场计算(None) 输出逐位一致。"""
+    h, ab, pos, N, G = _toy_batch()
+    m = GlobalInteraction(16, num_tokens=2, n_k=4)
+    basis = m.compute_phase_basis(pos, ab, G)
+    out_pre = m(h, ab, G, pos, None, basis)
+    out_onfly = m(h, ab, G, pos)
+    assert torch.allclose(out_pre, out_onfly, atol=1e-6)
+
+
+def test_phase_basis_precompute_equivalence_recip():
+    """倒格矢版跨层预计算等价性。"""
+    h, ab, _, N, G = _toy_batch()
+    cell, cell0, cell1 = _two_cells()
+    pos = torch.rand(N, 3)
+    pos[:6] = pos[:6] @ cell0
+    pos[6:] = pos[6:] @ cell1
+    m = GlobalInteraction(16, num_tokens=2, n_k=1, use_reciprocal=True, n_max=2)
+    basis = m.compute_phase_basis(pos, ab, G, cell)
+    out_pre = m(h, ab, G, pos, cell, basis)
+    out_onfly = m(h, ab, G, pos, cell)
+    assert torch.allclose(out_pre, out_onfly, atol=1e-6)
+
+
 if __name__ == "__main__":
     import sys
     sys.exit(pytest.main([__file__, "-v"]))

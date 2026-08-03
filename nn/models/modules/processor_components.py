@@ -117,7 +117,7 @@ class GlobalInteraction(nn.Module):
 
     def forward(self, h_atm: torch.Tensor, atom_batch: torch.Tensor,
                 num_graphs: int = None, pos: torch.Tensor = None,
-                cell: torch.Tensor = None) -> torch.Tensor:
+                cell: torch.Tensor = None, phase_basis=None) -> torch.Tensor:
         if num_graphs is None:
             num_graphs = int(atom_batch.max()) + 1
         N = h_atm.size(0)
@@ -136,9 +136,20 @@ class GlobalInteraction(nn.Module):
         g_broadcast = g[atom_batch].reshape(N, self.num_tokens * self.dim)  # 广播回原子
         feats = [h_atm, g_broadcast]
         if self.use_phase and pos is not None:
-            feats.append(self._phase_feature(h_atm, alpha, atom_batch, num_graphs, pos, N, cell))
+            # phase_basis 由上层(LCP)跨层预计算一次并传入, 避免每层重算 cos/sin 与倒格矢求逆;
+            # 未传入时回退为当场计算(向后兼容)。
+            if phase_basis is None:
+                phase_basis = self._phase_kr(pos, atom_batch, num_graphs, cell)
+            feats.append(self._phase_feature(h_atm, alpha, atom_batch, num_graphs, N, phase_basis))
         delta = self.update(torch.cat(feats, dim=-1))
         return h_atm + self.gate * self.norm(delta)                      # ReZero 门控残差注入
+
+    def compute_phase_basis(self, pos: torch.Tensor, atom_batch: torch.Tensor,
+                            num_graphs: int, cell: torch.Tensor = None):
+        """供上层跨层复用: 相位基 (cos_kr, sin_kr) 只依赖 pos/cell, 与层无关, 全 batch 一次算完。"""
+        if not self.use_phase or pos is None:
+            return None
+        return self._phase_kr(pos, atom_batch, num_graphs, cell)
 
     def _phase_kr(self, pos: torch.Tensor, atom_batch: torch.Tensor,
                   num_graphs: int, cell: torch.Tensor):
@@ -159,8 +170,7 @@ class GlobalInteraction(nn.Module):
 
     def _phase_feature(self, h_atm: torch.Tensor, alpha: torch.Tensor,
                        atom_batch: torch.Tensor, num_graphs: int,
-                       pos: torch.Tensor, N: int,
-                       cell: torch.Tensor = None) -> torch.Tensor:
+                       N: int, phase_basis) -> torch.Tensor:
         """傅里叶相位摘要(实数实现): 对每个 k 计算带注意力权重的复数结构因子,
         再减自身相位取实部, 得逐原子的距离感知特征。
 
@@ -171,22 +181,26 @@ class GlobalInteraction(nn.Module):
           g_phase_{j,k} = C_k[b_j] cos(k.r_j) + D_k[b_j] sin(k.r_j)
         = sum_i alpha_i z_i cos(k.(r_i - r_j)) -> 平移不变, 精确含真实两两距离。
         gate_phi 缩放后拼接; gate_phi=0 时整路为 0, 严格退化。
+
+        性能(①): 按 k 循环(n_k 极小, 如 3), 中间张量峰值从 [N,T,dim,n_k] 降为 [N,T,dim],
+        scatter 从 4D 降为 3D×n_k 次(更易融合、显存与 autograd 保存量降 n_k 倍)。
+        与原 4D 实现数值等价(flatten 同序 t,d,k)。
         """
+        cos_kr, sin_kr = phase_basis                                     # 各 [N, n_k]
         z = self.phase_value(h_atm).view(N, self.num_tokens, self.dim)    # [N, T, dim]
-        cos_kr, sin_kr = self._phase_kr(pos, atom_batch, num_graphs, cell)  # [N, n_k]
-        # z_i 与相位相乘: [N, T, dim, n_k]
-        zc = z.unsqueeze(-1) * cos_kr.unsqueeze(1).unsqueeze(1)           # [N, T, dim, n_k]
-        zs = z.unsqueeze(-1) * sin_kr.unsqueeze(1).unsqueeze(1)
-        # 带注意力权重的结构因子, 按图聚合(严格 batch 隔离)
-        aw = alpha.unsqueeze(-1).unsqueeze(-1)                            # [N, T, 1, 1]
-        C = scatter(aw * zc, atom_batch, dim=0, dim_size=num_graphs, reduce='sum')  # [G,T,dim,n_k]
-        D = scatter(aw * zs, atom_batch, dim=0, dim_size=num_graphs, reduce='sum')
-        # 广播回原子并减自身相位
-        Cj = C[atom_batch]                                               # [N, T, dim, n_k]
-        Dj = D[atom_batch]
-        g_phase = Cj * cos_kr.unsqueeze(1).unsqueeze(1) + Dj * sin_kr.unsqueeze(1).unsqueeze(1)
+        az = alpha.unsqueeze(-1) * z                                      # [N, T, dim] 带注意力权重
+        outs = []
+        for k in range(self.n_k):
+            ck = cos_kr[:, k].unsqueeze(-1).unsqueeze(-1)                 # [N,1,1]
+            sk = sin_kr[:, k].unsqueeze(-1).unsqueeze(-1)
+            C = scatter(az * ck, atom_batch, dim=0, dim_size=num_graphs, reduce='sum')  # [G,T,dim]
+            D = scatter(az * sk, atom_batch, dim=0, dim_size=num_graphs, reduce='sum')
+            gk = C[atom_batch] * ck + D[atom_batch] * sk                  # [N,T,dim] 减自身相位
+            outs.append(gk)
+        # 按 k 堆叠并展平, 与原 reshape(N, T*dim*n_k) 同序(t,d,k)
+        g_phase = torch.stack(outs, dim=-1)                              # [N,T,dim,n_k]
         g_phase = self.gate_phi * g_phase                                # 内层门控, =0 严格退化
-        return g_phase.reshape(N, self.num_tokens * self.n_k * self.dim)
+        return g_phase.reshape(N, self.num_tokens * self.dim * self.n_k)
 
 
 class HGC(nn.Module):
@@ -290,14 +304,21 @@ class LCP(nn.Module):
         pos 仅在 use_phase 分支需要, 用于傅里叶相位求相对距离。
         """
         if self.iml_node_only:
+            phase_basis = None
+            if self.global_layers is not None:
+                # 跨层预计算相位基(与层无关, 只依赖 pos/cell), 避免每层重算。
+                phase_basis = self.global_layers[0].compute_phase_basis(pos, atom_batch, n_graphs, cell)
             for idx, atm_bnd_iml in enumerate(self.atm_bnd_imls):
                 h_atm = atm_bnd_iml(h_atm, edge_index_bndI, h_bndI[index_bondI_map])
                 if self.global_layers is not None:
-                    h_atm = self.global_layers[idx](h_atm, atom_batch, n_graphs, pos, cell)
+                    h_atm = self.global_layers[idx](h_atm, atom_batch, n_graphs, pos, cell, phase_basis)
         else:
+            phase_basis = None
+            if self.global_layers is not None:
+                phase_basis = self.global_layers[0].compute_phase_basis(pos, atom_batch, n_graphs, cell)
             for idx, atm_bnd_iml in enumerate(self.atm_bnd_imls):
                 h_atm, h_bndI_cplt = atm_bnd_iml(h_atm, edge_index_bndI, h_bndI[index_bondI_map])
                 h_bndI = scatter(h_bndI_cplt, index_bondI_map, dim=0, reduce='mean', dim_size=h_bndI.shape[0])
                 if self.global_layers is not None:
-                    h_atm = self.global_layers[idx](h_atm, atom_batch, n_graphs, pos, cell)
+                    h_atm = self.global_layers[idx](h_atm, atom_batch, n_graphs, pos, cell, phase_basis)
         return h_atm

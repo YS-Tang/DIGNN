@@ -50,11 +50,6 @@ class BaseProcessor(ABC, nn.Module):
         self._init_feature_nns(atom_dim, bond_dim, ang_dim, dih_dim, bondI_dim, init_nn_layer)
         self.pml_node_only = None
         self.iml_node_only = None
-        
-        self.atm_bnd_pmls = None
-        self.bnd_ang_pmls = None
-        self.ang_dih_pmls = None
-        self.atm_bnd_imls = None
     
     def _init_feature_nns(self, atom_dim: int, bond_dim: int, ang_dim: int, dih_dim: int, bondI_dim: int, init_nn_layer: int) -> None:
         """初始化特征变换网络"""
@@ -79,9 +74,11 @@ class BaseProcessor(ABC, nn.Module):
             nn.LayerNorm(bondI_dim)
         )
     
-    def _init_processor_components(self):
-        self.hgc = HGC(self.atm_bnd_pmls, self.bnd_ang_pmls, self.ang_dih_pmls, self.pml_node_only)
-        self.lcp = LCP(self.atm_bnd_imls, self.iml_node_only,
+    def _init_processor_components(self, atm_bnd_pmls, bnd_ang_pmls, ang_dih_pmls, atm_bnd_imls):
+        # 层列表只注册在 hgc/lcp 之下(单一持有者), 避免 processor 与 hgc/lcp
+        # 重复注册同一批模块导致 state_dict 双份键与 print 重复显示。
+        self.hgc = HGC(atm_bnd_pmls, bnd_ang_pmls, ang_dih_pmls, self.pml_node_only)
+        self.lcp = LCP(atm_bnd_imls, self.iml_node_only,
                        atom_dim=self.atom_dim,
                        num_tokens=self.num_global_tokens, gate_init=self.global_gate_init,
                        n_k=self.n_k,
@@ -201,20 +198,20 @@ class GCN_Processor(BaseProcessor):
     
     def _init_gcn_layers(self, atom_dim: int, bond_dim: int, ang_dim: int, dih_dim: int, bondI_dim: int) -> None:
         """初始化 GCN 层"""
-        self.atm_bnd_pmls = nn.ModuleList([
+        atm_bnd_pmls = nn.ModuleList([
             GatedGCN(atom_dim, bond_dim, residual=self.residual) for _ in range(self.pml)
         ])
-        self.bnd_ang_pmls = nn.ModuleList([
+        bnd_ang_pmls = nn.ModuleList([
             GatedGCN(bond_dim, ang_dim, residual=self.residual) for _ in range(self.pml)
         ])
-        self.ang_dih_pmls = nn.ModuleList([
+        ang_dih_pmls = nn.ModuleList([
             GatedGCN(ang_dim, dih_dim, residual=self.residual) for _ in range(self.pml)
         ])
-        self.atm_bnd_imls = nn.ModuleList([
+        atm_bnd_imls = nn.ModuleList([
             GatedGCN(atom_dim, bondI_dim, residual=self.residual) for _ in range(self.iml)
         ])
         
-        self._init_processor_components()
+        self._init_processor_components(atm_bnd_pmls, bnd_ang_pmls, ang_dih_pmls, atm_bnd_imls)
 
 
 class GINE_Processor(BaseProcessor):
@@ -251,26 +248,26 @@ class GINE_Processor(BaseProcessor):
         """初始化, 暂只修改IML层交互为GINE"""
         from ...convs.gin import GINE
 
-        self.atm_bnd_pmls = nn.ModuleList([
+        atm_bnd_pmls = nn.ModuleList([
             GatedGCN(atom_dim, bond_dim, residual=self.residual) for _ in range(self.pml)
         ])
-        self.bnd_ang_pmls = nn.ModuleList([
+        bnd_ang_pmls = nn.ModuleList([
             GatedGCN(bond_dim, ang_dim, residual=self.residual) for _ in range(self.pml)
         ])
-        self.ang_dih_pmls = nn.ModuleList([
+        ang_dih_pmls = nn.ModuleList([
             GatedGCN(ang_dim, dih_dim, residual=self.residual) for _ in range(self.pml)
         ])
         
         if gin_nn is not None:
-            self.atm_bnd_imls = nn.ModuleList([
+            atm_bnd_imls = nn.ModuleList([
                 GINE(atom_dim, bondI_dim, gin_nn, residual=self.residual) for _ in range(self.iml)
             ])
         else:
-            self.atm_bnd_imls = nn.ModuleList([
+            atm_bnd_imls = nn.ModuleList([
                 GatedGCN(atom_dim, bondI_dim, residual=self.residual) for _ in range(self.iml)
             ])
         
-        self._init_processor_components()
+        self._init_processor_components(atm_bnd_pmls, bnd_ang_pmls, ang_dih_pmls, atm_bnd_imls)
 
 
 class GATv2_Processor(BaseProcessor):
@@ -307,18 +304,18 @@ class GATv2_Processor(BaseProcessor):
         """初始化, 暂只修改IML层交互为GATv2"""
         from torch_geometric.nn import GATv2Conv
 
-        self.atm_bnd_pmls = nn.ModuleList([
+        atm_bnd_pmls = nn.ModuleList([
             GatedGCN(atom_dim, bond_dim, residual=self.residual) for _ in range(self.pml)
         ])
-        self.bnd_ang_pmls = nn.ModuleList([
+        bnd_ang_pmls = nn.ModuleList([
             GatedGCN(bond_dim, ang_dim, residual=self.residual) for _ in range(self.pml)
         ])
-        self.ang_dih_pmls = nn.ModuleList([
+        ang_dih_pmls = nn.ModuleList([
             GatedGCN(ang_dim, dih_dim, residual=self.residual) for _ in range(self.pml)
         ])
         
         if gat_heads is not None:
-            self.atm_bnd_imls = nn.ModuleList([
+            atm_bnd_imls = nn.ModuleList([
                 GATv2Conv(in_channels=atom_dim,
                           out_channels=bondI_dim,
                           edge_dim=bondI_dim,
@@ -327,11 +324,11 @@ class GATv2_Processor(BaseProcessor):
                           concat=False) for _ in range(self.iml)
             ])
         else:
-            self.atm_bnd_imls = nn.ModuleList([
+            atm_bnd_imls = nn.ModuleList([
                 GatedGCN(atom_dim, bondI_dim, residual=self.residual) for _ in range(self.iml)
             ])
         
-        self._init_processor_components()
+        self._init_processor_components(atm_bnd_pmls, bnd_ang_pmls, ang_dih_pmls, atm_bnd_imls)
 
 
 class EGAT_Processor(BaseProcessor):
@@ -369,21 +366,21 @@ class EGAT_Processor(BaseProcessor):
         """初始化 EGAT 层"""
         from ...convs.egat import EGATs_attention
         
-        self.atm_bnd_pmls = nn.ModuleList([
+        atm_bnd_pmls = nn.ModuleList([
             EGATs_attention(atom_dim, edge_dim=bond_dim, num_heads=egat_heads, num_fc_layers=egat_fc_layers)
             for _ in range(self.pml)
         ])
-        self.bnd_ang_pmls = nn.ModuleList([
+        bnd_ang_pmls = nn.ModuleList([
             EGATs_attention(bond_dim, edge_dim=ang_dim, num_heads=egat_heads, num_fc_layers=egat_fc_layers)
             for _ in range(self.pml)
         ])
-        self.ang_dih_pmls = nn.ModuleList([
+        ang_dih_pmls = nn.ModuleList([
             EGATs_attention(ang_dim, edge_dim=dih_dim, num_heads=egat_heads, num_fc_layers=egat_fc_layers)
             for _ in range(self.pml)
         ])
-        self.atm_bnd_imls = nn.ModuleList([
+        atm_bnd_imls = nn.ModuleList([
             EGATs_attention(atom_dim, edge_dim=bondI_dim, num_heads=egat_heads, num_fc_layers=egat_fc_layers)
             for _ in range(self.iml)
         ])
         
-        self._init_processor_components()
+        self._init_processor_components(atm_bnd_pmls, bnd_ang_pmls, ang_dih_pmls, atm_bnd_imls)

@@ -24,8 +24,8 @@ class Sign:
         self.idx_map[edge_ids_norm] = torch.arange(edge_ids_norm.size(0), device=self.calc_device)
         
         # 向量化索引转换 (替代列表推导)
-        src_indices = self.idx_map[joint[0]]
-        dst_indices = self.idx_map[joint[1]]
+        src_indices = self.idx_map[self.joint[0]]
+        dst_indices = self.idx_map[self.joint[1]]
         
         # 数据提取
         self.src_edges = self.edge_index_norm[:, src_indices]

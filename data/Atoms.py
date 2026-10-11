@@ -212,7 +212,7 @@ class AtomsData(Data):
         self.bondI_batch = self.atom_batch[self.bondI_index_reo[0]]
         if is_pbc:
             cell_neighbors_I = degree(self.bondI_batch).long()
-            out = get_pbc_distances(self.pos, self.bondI_index_reo, self.cell, self.cell_offset_I_reo, cell_neighbors_I, False, True)
+            out = get_pbc_distances(self.pos, self.bondI_index_reo.flip(0), self.cell, self.cell_offset_I_reo, cell_neighbors_I, False, True)
             _, self.BondLengthI_reo, BondIVec_reo = out.values()
             self.BondLengthI_reo = self.BondLengthI_reo.view(-1, 1)
         else:
@@ -278,7 +278,7 @@ class AtomsData(Data):
             raise ValueError("晶体结构必须提供cell属性（晶胞参数）")
         
         if not hasattr(self, 'atom_ptr'):
-            self.atom_ptr = torch.tensor([0, self.atom.shape[0]])
+            self.atom_ptr = torch.tensor([0, self.atom.shape[0]], device=self.atom.device)
         
         if not hasattr(self, 'pbc'):
             # 若未提供pbc属性，默认开启三维PBC

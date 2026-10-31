@@ -94,11 +94,7 @@ class AtomsData(Data):
                                                             pbc=self.pbc)
             (self.bond_index_reo, self.cell_offset_reo, self.bond_index) = self._crystal_topo(bond_index, cell_offset)
             
-            offset_hash = self._offset_hash(self.cell_offset_reo, torch.max(self.bond_index_reo))
-            bond_index_reo_bias = self.bond_index_reo.clone()
-            bond_index_reo_bias[1] += offset_hash # 下排表示dst, 添加bias之后保证不同晶胞内的对应原子有不同的索引, 以便于bondG的连接计算, 以及符号计算不会混乱
-            
-            self.angle_index = to_undirected(line_graph(bond_index_reo_bias))
+            self._crystal_high_order_topo()
             
         else:
             self.bond_index = to_undirected(radius_graph(self.pos, r=pml_rcut, max_num_neighbors=pml_mnn, batch=self.atom_batch))
@@ -106,21 +102,15 @@ class AtomsData(Data):
         
             self.angle_index = to_undirected(line_graph(self.bond_index))
         
-        self.angle_index, self.angle_index_reo = _index_reorg(self.angle_index)
-        
-        self.dihedral_index = to_undirected(line_graph(self.angle_index))
-        # 去除三角形环形子图计算的二面角
-        mask = self._rm_TriangleLoopSubgraphDih_mask()
-        self.dihedral_index = self.dihedral_index[:, mask]
-        self.dihedral_index, self.dihedral_index_reo = _index_reorg(self.dihedral_index)
-        
-        
-        # 计算位置对齐的符号
-        if is_pbc:
-            self.bond2angle_AliSign = Sign(bond_index_reo_bias, self.angle_index_reo).AlignmentSign()
-        else:
+        if not is_pbc:
+            self.angle_index, self.angle_index_reo = _index_reorg(self.angle_index)
+            self.dihedral_index = to_undirected(line_graph(self.angle_index))
+            # 去除三角形环形子图计算的二面角
+            mask = self._rm_TriangleLoopSubgraphDih_mask()
+            self.dihedral_index = self.dihedral_index[:, mask]
+            self.dihedral_index, self.dihedral_index_reo = _index_reorg(self.dihedral_index)
             self.bond2angle_AliSign = Sign(self.bond_index_reo, self.angle_index_reo).AlignmentSign()
-        self.angle2dihedral_AliSign = Sign(self.angle_index_reo, self.dihedral_index_reo).AlignmentSign()
+            self.angle2dihedral_AliSign = Sign(self.angle_index_reo, self.dihedral_index_reo).AlignmentSign()
 
 
         """
@@ -164,7 +154,9 @@ class AtomsData(Data):
                     'angle_index_reo', 'angle2dihedral_AliSign',
                     'dihedral_index_reo',
                     'BondVec_reo_uni', 'CrossAng_AliSign', 'CrossVec_PosSignFm',
-                    'bondI_index_reo', 'cell_offset_I_reo']
+                    'bondI_index_reo', 'cell_offset_I_reo',
+                    'periodic_angle_atoms', 'periodic_angle_shifts',
+                    'periodic_dihedral_atoms', 'periodic_dihedral_shifts']
         for attr in aux_attr:
             if hasattr(self, attr):
                 delattr(self, attr)
@@ -200,7 +192,7 @@ class AtomsData(Data):
         self.bond_batch = self.atom_batch[self.bond_index_reo[0]]
         is_pbc = bool(torch.all(torch.as_tensor(self.if_pbc)))
         if is_pbc:
-            cell_neighbors = degree(self.bond_batch).long()
+            cell_neighbors = degree(self.bond_batch, num_nodes=self.cell.shape[0]).long()
             out = get_pbc_distances(self.pos, self.bond_index_reo.flip(0), self.cell, self.cell_offset_reo, cell_neighbors, False, True)
             _, self.BondLength_reo, BondVec_reo = out.values()
             self.BondLength_reo = self.BondLength_reo.view(-1, 1)
@@ -211,7 +203,7 @@ class AtomsData(Data):
         
         self.bondI_batch = self.atom_batch[self.bondI_index_reo[0]]
         if is_pbc:
-            cell_neighbors_I = degree(self.bondI_batch).long()
+            cell_neighbors_I = degree(self.bondI_batch, num_nodes=self.cell.shape[0]).long()
             out = get_pbc_distances(self.pos, self.bondI_index_reo.flip(0), self.cell, self.cell_offset_I_reo, cell_neighbors_I, False, True)
             _, self.BondLengthI_reo, BondIVec_reo = out.values()
             self.BondLengthI_reo = self.BondLengthI_reo.view(-1, 1)
@@ -223,6 +215,17 @@ class AtomsData(Data):
         """
         计算角度特征
         """
+        if bool(torch.all(torch.as_tensor(self.if_pbc))):
+            points = self._periodic_points(self.periodic_angle_atoms, self.periodic_angle_shifts)
+            left, right = points[:, 0] - points[:, 1], points[:, 2] - points[:, 1]
+            left = left / (left.norm(dim=-1, keepdim=True) + self.EPS)
+            right = right / (right.norm(dim=-1, keepdim=True) + self.EPS)
+            cosine = DifferentiableClamp.apply((left * right).sum(-1), -1+self.EPS, 1-self.EPS)
+            self.BondAngle_reo = torch.acos(cosine).to(self.pos.dtype)
+            self.CosAng_reo = self.BondAngle_reo
+            self.angle_batch = self.atom_batch[self.periodic_angle_atoms[:, 1]]
+            return
+
         CrossSign = Sign(self.bond_index_reo, self.angle_index_reo)
         self.CrossAng_AliSign = CrossSign.AlignmentSign()
         self.CrossVec_PosSignFm = CrossSign.PositionSign('former')
@@ -240,6 +243,27 @@ class AtomsData(Data):
         """
         计算二面角特征
         """
+        if bool(torch.all(torch.as_tensor(self.if_pbc))):
+            points = self._periodic_points(self.periodic_dihedral_atoms, self.periodic_dihedral_shifts)
+            first = points[:, 1] - points[:, 0]
+            middle = points[:, 2] - points[:, 1]
+            last = points[:, 3] - points[:, 2]
+            first = first / (first.norm(dim=-1, keepdim=True) + self.EPS)
+            middle = middle / (middle.norm(dim=-1, keepdim=True) + self.EPS)
+            last = last / (last.norm(dim=-1, keepdim=True) + self.EPS)
+            normal_first = torch.cross(first, middle, dim=-1)
+            normal_last = torch.cross(middle, last, dim=-1)
+            # 共线三原子没有唯一平面，屏蔽 FP32 叉积残差，统一返回 π/2。
+            normal_first = torch.where(normal_first.norm(dim=-1, keepdim=True) > self.EPS, normal_first, 0.0)
+            normal_last = torch.where(normal_last.norm(dim=-1, keepdim=True) > self.EPS, normal_last, 0.0)
+            normal_first = normal_first / (normal_first.norm(dim=-1, keepdim=True) + self.EPS)
+            normal_last = normal_last / (normal_last.norm(dim=-1, keepdim=True) + self.EPS)
+            cosine = DifferentiableClamp.apply((normal_first * normal_last).sum(-1), -1+self.EPS, 1-self.EPS)
+            self.DihedralAngle_reo = torch.acos(cosine).to(self.pos.dtype)
+            self.CosDih_reo = self.DihedralAngle_reo
+            self.dihedral_batch = self.atom_batch[self.periodic_dihedral_atoms[:, 1]]
+            return
+
         ang_row, ang_col = self.angle_index_reo
         CrossVec_reo = torch.cross(self.BondVec_reo_uni[ang_row], self.BondVec_reo_uni[ang_col], dim=-1)
         CrossVec_uni = CrossVec_reo / (torch.linalg.norm(CrossVec_reo, dim=-1, keepdim=True) + self.EPS)
@@ -309,6 +333,72 @@ class AtomsData(Data):
         mask = (dih_fm_AOB == dih_lt_PB[0, :]) | (dih_fm_AOB == dih_lt_PB[1, :])
         return ~mask
     
+    def _periodic_points(self, atoms: Tensor, shifts: Tensor) -> Tensor:
+        cells = self.cell[self.atom_batch[atoms[:, 1]]]
+        # 周期坐标消减及近共线法向量对 FP32 舍入敏感，几何中间量用 FP64。
+        return self.pos[atoms].double() + torch.bmm(shifts.double(), cells.double())
+
+    def _crystal_high_order_topo(self) -> None:
+        # 邻居身份包含相对晶胞偏移；每个中心都平移回基准晶胞。
+        from itertools import combinations
+
+        adjacency = [[] for _ in range(self.pos.shape[0])]
+        bonds = self.bond_index_reo.T.cpu().tolist()
+        shifts = self.cell_offset_reo.long().cpu().tolist()
+        zero = (0, 0, 0)
+        for edge, ((i, j), shift) in enumerate(zip(bonds, shifts)):
+            shift = tuple(shift)
+            adjacency[i].append((j, shift, edge, 1))
+            adjacency[j].append((i, tuple(-s for s in shift), edge, -1))
+        for neighbors in adjacency:
+            neighbors.sort()
+
+        def angle_key(center, left, right):
+            return (center, *sorted((left, right)))
+
+        angle_ids, angle_edges, angle_atoms, angle_shifts, signs = {}, [], [], [], []
+        for center, neighbors in enumerate(adjacency):
+            for left, right in combinations(neighbors, 2):
+                key = angle_key(center, (left[0], left[1]), (right[0], right[1]))
+                angle_ids[key] = len(angle_edges)
+                angle_edges.append((left[2], right[2]))
+                angle_atoms.append((left[0], center, right[0]))
+                angle_shifts.append((left[1], zero, right[1]))
+                signs.append(left[3] * right[3])
+
+        dihedral_edges, dihedral_atoms, dihedral_shifts = [], [], []
+        for (i, j), shift in zip(bonds, shifts):
+            shift = tuple(shift)
+            reverse_shift = tuple(-s for s in shift)
+            for left in adjacency[i]:
+                if (left[0], left[1]) == (j, shift):
+                    continue
+                for right in adjacency[j]:
+                    if (right[0], right[1]) == (i, reverse_shift):
+                        continue
+                    right_shift = tuple(a + b for a, b in zip(shift, right[1]))
+                    identities = ((left[0], left[1]), (i, zero), (j, shift), (right[0], right_shift))
+                    if len(set(identities)) != 4:
+                        continue
+                    first = angle_ids[angle_key(i, (left[0], left[1]), (j, shift))]
+                    last = angle_ids[angle_key(j, (i, reverse_shift), (right[0], right[1]))]
+                    dihedral_edges.append((first, last))
+                    dihedral_atoms.append((left[0], i, j, right[0]))
+                    dihedral_shifts.append((left[1], zero, shift, right_shift))
+
+        def tensor(values, shape):
+            return torch.tensor(values, dtype=torch.long, device=self.device).reshape(shape)
+
+        self.angle_index_reo = tensor(angle_edges, (-1, 2)).T.contiguous()
+        self.dihedral_index_reo = tensor(dihedral_edges, (-1, 2)).T.contiguous()
+        self.angle_index = torch.cat([self.angle_index_reo, self.angle_index_reo.flip(0)], dim=1)
+        self.dihedral_index = torch.cat([self.dihedral_index_reo, self.dihedral_index_reo.flip(0)], dim=1)
+        self.periodic_angle_atoms = tensor(angle_atoms, (-1, 3))
+        self.periodic_angle_shifts = tensor(angle_shifts, (-1, 3, 3))
+        self.periodic_dihedral_atoms = tensor(dihedral_atoms, (-1, 4))
+        self.periodic_dihedral_shifts = tensor(dihedral_shifts, (-1, 4, 3))
+        self.bond2angle_AliSign = tensor(signs, (-1,))
+
     @staticmethod
     def _crystal_topo(index: Tensor, offset: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
         """
@@ -325,11 +415,19 @@ class AtomsData(Data):
                 - index: 双向边索引
         """
         index = index.flip(0) # 切换至上排为src, 下排为dst, 以便于后续为dst添加offset_hash_bias之后依然保持row <= cal (注意等号表示允许跨晶胞的self loop)
-        index_sorted, offset_sorted = sort_edge_index(index, offset)
-        row, col = index_sorted
-        mask_reo = row <= col
-        
-        index_reo, offset_reo = index_sorted[:, mask_reo], offset_sorted[mask_reo]
+        row, col = index
+        nonzero = offset != 0
+        first_axis = nonzero.long().argmax(dim=1)
+        first_offset = offset.gather(1, first_axis[:, None]).squeeze(1)
+        reverse = (row > col) | ((row == col) & (first_offset < 0))
+        index = torch.where(reverse[None, :], index.flip(0), index)
+        offset = torch.where(reverse[:, None], -offset, offset)
+
+        # 周期边由端点和晶胞偏移共同标识，不能仅按原子对去重。
+        keys = torch.cat([index.T, offset.long()], dim=1)
+        keys = torch.unique(keys, dim=0, sorted=True)
+        index_reo = keys[:, :2].T.contiguous()
+        offset_reo = keys[:, 2:].to(offset.dtype)
         index = torch.hstack([index_reo, index_reo.flip(0)]) # 确保双向
         
         return index_reo, offset_reo, index

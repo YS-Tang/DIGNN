@@ -161,6 +161,46 @@ class AtomsData(Data):
             if hasattr(self, attr):
                 delattr(self, attr)
 
+    # ---------- 内存压缩 ----------
+    # 这些量在 forward 的 update_geo() 里会由 pos 重新算出来，basic 图无需携带。
+    # 仅当随后会调用 update_cplt_graph(...) 重建几何时才能删（即 return_type='basic'）。
+    GEO_DERIVED_ATTRS = ('BondVec_reo_uni', 'BondLength_reo', 'BondLengthI_reo',
+                         'BondAngle_reo', 'CosAng_reo',
+                         'DihedralAngle_reo', 'CosDih_reo',
+                         'CrossAng_AliSign', 'CrossVec_PosSignFm',
+                         'bond_batch', 'angle_batch', 'dihedral_batch', 'bondI_batch')
+    # 注意：BndReo4Bnd / AngReo4Ang / DihReo4Dih 虽然形状像 arange 拼接，但周期
+    # 拓扑补全角度时会重排，不能由 _calc_map() 重建（实测能量差 0.68 eV）。
+    # 周期镜像位移，值域 -1..2，int8 足够（实测占 basic 图 40% 以上）。
+    SHIFT_ATTRS = ('periodic_angle_shifts', 'periodic_dihedral_shifts')
+    # 纯索引字段，规模远小于 2^31，int32 足够。不可压缩的：
+    #   * bond/angle/dihedral/bondI_index 与 *Reo4* 映射：在 processor 里作为
+    #     scatter_add_ 的 index，必须 Long；
+    #   * *_batch 与 atom：PyG 的 segment 归约和 embedding 要求 int64。
+    INDEX_ATTRS = ('bond_index_reo', 'bondI_index_reo',
+                   'angle_index_reo', 'dihedral_index_reo',
+                   'periodic_angle_atoms', 'periodic_dihedral_atoms',
+                   'bond2angle_AliSign', 'angle2dihedral_AliSign')
+
+    def compact_topo(self, drop_derived: bool = True) -> None:
+        """压缩拓扑字段以节省内存，计算结果是数值等价的。
+
+        drop_derived: 删除 update_geo() 会重算的派生量。只有确定随后会调用
+            update_cplt_graph(..., pos_grad=True) 重建几何时才可启用。
+        """
+        for attr in self.SHIFT_ATTRS:
+            value = getattr(self, attr, None)
+            if isinstance(value, torch.Tensor) and value.dtype != torch.int8:
+                setattr(self, attr, value.to(torch.int8))
+        for attr in self.INDEX_ATTRS:
+            value = getattr(self, attr, None)
+            if isinstance(value, torch.Tensor) and value.dtype != torch.int32:
+                setattr(self, attr, value.to(torch.int32))
+        if drop_derived:
+            for attr in self.GEO_DERIVED_ATTRS:
+                if hasattr(self, attr):
+                    delattr(self, attr)
+
     def to_ase(self):
         """
         单个AtomsData转换为 ASE Atoms 对象

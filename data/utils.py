@@ -262,16 +262,28 @@ def AtomsData2ase(data: AtomsData, properties: list[str]=None) -> Atoms:
 def AtomsData2ase_list(data_batch: AtomsData, properties: list[str]=None) -> list[Atoms]:
     raise NotImplementedError("AtomsData2ase_list 未实现")
 
-def _process_single_basic_batch(batch, pml_rcut, pml_mnn, iml_rcut, iml_mnn, store_device):
-    """单个batch的处理函数"""
+def _process_single_basic_batch(batch, pml_rcut, pml_mnn, iml_rcut, iml_mnn, store_device,
+                                compact_topo=None):
+    """单个batch的处理函数
+
+    compact_topo: None 不处理；'dtype' 只压缩索引/位移的 dtype；
+        'full' 额外删除 update_geo() 会重算的派生量（仅 return_type='basic' 安全）。
+    """
     batch.update_topo(pml_rcut=pml_rcut, pml_mnn=pml_mnn, 
                       iml_rcut=iml_rcut, iml_mnn=iml_mnn)
-    return batch.to(store_device)
+    batch = batch.to(store_device)
+    if compact_topo:
+        batch.compact_topo(drop_derived=(compact_topo == 'full'))
+    return batch
 
 def update_basic_batch(loader: DataLoader, pml_rcut, pml_mnn, iml_rcut, iml_mnn, 
-                       store_device='cpu', num_workers=None) -> list[AtomsData]:
+                       store_device='cpu', num_workers=None, compact_topo=None) -> list[AtomsData]:
     """
     用以批量更新topo（多进程版本）
+
+    num_workers: 建议 1。多进程的结果会在每个 worker 里各留一份不归还 OS，
+        实测 16 进程的常驻内存是单进程的 5 倍以上。
+    compact_topo: 见 _process_single_basic_batch，默认 None 保持原有行为。
     """
     if num_workers is None:
         num_workers = 1
@@ -279,7 +291,7 @@ def update_basic_batch(loader: DataLoader, pml_rcut, pml_mnn, iml_rcut, iml_mnn,
     batches = list(loader)
     
     results = Parallel(n_jobs=num_workers, prefer="processes")(
-        delayed(_process_single_basic_batch)(batch, pml_rcut, pml_mnn, iml_rcut, iml_mnn, store_device)
+        delayed(_process_single_basic_batch)(batch, pml_rcut, pml_mnn, iml_rcut, iml_mnn, store_device, compact_topo)
         for batch in tqdm.tqdm(batches, desc="Updating topo", unit="batch")
     )
     
@@ -292,6 +304,13 @@ def update_cplt_graph(basic_graph: AtomsData, store_device='cpu', pos_grad=False
     store_device: complete graph的转换和保存位置
     """
     basic_graph.to(store_device)
+    # update_topo 存的是单图的 n_graphs=int，但 PyG 的 collate 会把 int 属性
+    # stack 成 Tensor（值全为 1），而 decoder 的 scatter(dim_size=...) 必须是 int。
+    # 这里按 batch 的结构边界重设；单图（无 ptr）保持原值。
+    ptr = getattr(basic_graph, 'ptr', None)
+    if ptr is not None:
+        basic_graph.n_graphs = int(ptr.numel() - 1)
+    # compact_topo(drop_derived=True) 会删掉 update_geo() 能重算的派生量
     basic_graph.pos.requires_grad = pos_grad
     basic_graph.update_geo()
     if if_strip:

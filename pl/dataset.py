@@ -32,7 +32,8 @@ class DataModule(pl.LightningDataModule):
                  store_device='cpu',
                  random_state=42,
                  mapper:AtomIndexMapper=None,
-                 return_type:str='cplt'):
+                 return_type:str='cplt',
+                 compact_topo:str='auto'):
         super().__init__()
         self.atomsdata = atomsdata
         self.pml_rcut = pml_rcut
@@ -48,6 +49,9 @@ class DataModule(pl.LightningDataModule):
         self.mapper = mapper
         self.return_type = return_type
         assert self.return_type in ['basic', 'cplt'], "return_type must be 'basic' or 'cplt'"
+        self.compact_topo = compact_topo
+        assert compact_topo in ['auto', 'dtype', 'full', None], \
+            "compact_topo must be 'auto', 'dtype', 'full' or None"
         
         self.train_batch = []
         self.val_batch = []
@@ -94,8 +98,13 @@ class DataModule(pl.LightningDataModule):
 
     def _preprocess(self, data_list, shuffle: bool):
         """将 AtomsData 列表预处理为 basic 或 cplt 批数据"""
+        # 'auto': basic 图随后会被 update_cplt_graph 重建几何，派生量可删；cplt 图要存盘，只压 dtype
+        compact = self.compact_topo
+        if compact == 'auto':
+            compact = 'full' if self.return_type == 'basic' else 'dtype'
         loader = DataLoader(data_list, batch_size=self.batch_size, shuffle=shuffle, follow_batch=['atom'])
-        batch = update_basic_batch(loader, self.pml_rcut, self.pml_mnn, self.iml_rcut, self.iml_mnn, self.store_device, self.num_workers)
+        batch = update_basic_batch(loader, self.pml_rcut, self.pml_mnn, self.iml_rcut, self.iml_mnn,
+                                   self.store_device, self.num_workers, compact_topo=compact)
         if self.return_type == 'cplt':
             batch = update_cplt_batch(batch, self.store_device, self.num_workers)
         return batch

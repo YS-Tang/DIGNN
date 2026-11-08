@@ -73,19 +73,157 @@ def ase2AtomsData(ase_atoms, check_rcut: float, properties: list[str]=None, if_M
 
 def ase_db2AtomsData_list(ase_db, properties: list[str], r_cut: float):
     """
-    将ase_db中的所有结构转换为AtomsData格式，返回一个list
+    将ase_db中的所有结构转换为AtomsData格式，返回一个list（串行）
+
+    等价于 ase_db2AtomsData_parallel(ase_db, check_rcut=r_cut,
+                                     properties=properties, n_jobs=1)。
     """
-    data_list = []
-    for mol in tqdm.tqdm(ase_db.select()):
+    return ase_db2AtomsData_parallel(ase_db, check_rcut=r_cut,
+                                     properties=properties, n_jobs=1)
+
+
+def _convert_chunk_worker(atoms_list, keys, check_rcut, properties):
+    """多进程 worker：把一小批 ASE Atoms 转成 AtomsData。
+
+    单帧失败只记录到 bad，不让整批中断；异常类型一并保留，
+    避免串行写法里 except ValueError 之外的错误被 print 后静默吞掉。
+    """
+    good, bad = [], []
+    for atoms, key in zip(atoms_list, keys):
         try:
-            atoms = mol.toatoms()
-            for prop in properties:
-                atoms.arrays[prop] = mol.data[prop]
-            data_list.append(ase2AtomsData(atoms, properties, r_cut))
-        except ValueError as e:
-            print(e)
+            good.append(ase2AtomsData(atoms, check_rcut=check_rcut,
+                                      properties=list(properties)))
+        except ValueError as exc:          # 预期异常：连通性检查不通过
+            bad.append((key, f'ValueError: {exc}'))
+        except Exception as exc:           # 其余异常同样暴露出来
+            bad.append((key, f'{type(exc).__name__}: {exc}'))
+    return good, bad
+
+
+def _iter_db_atoms(source, subset=None, chunk=128, frame_stride=1,
+                   limit_per_system=None, group_key='system',
+                   energy_key='energy', force_key='force'):
+    """从 ase.db 流式读取并构造 ASE Atoms，按 chunk 产出 (atoms_list, keys)。
+
+    sqlite 连接只在调用方进程内使用，不跨进程传递。
+    frame_stride: 同一体系内每 N 帧取 1 帧，用于降采样控制内存。
+    limit_per_system: 同一体系最多取多少帧。
+    """
+    if hasattr(source, 'select'):          # 已经 connect 好的 db 对象
+        db = source
+    else:
+        from ase.db import connect
+        db = connect(source)
+    rows = db.select(subset=subset) if subset is not None else db.select()
+
+    counts, buf_atoms, buf_keys = {}, [], []
+    for mol in rows:
+        group = getattr(mol, group_key, '') if group_key else ''
+        frame = int(getattr(mol, 'frame', len(buf_keys)))
+        if frame_stride > 1 and frame % frame_stride != 0:
             continue
-    return data_list
+        if limit_per_system is not None and counts.get(group, 0) >= limit_per_system:
+            continue
+
+        atoms = mol.toatoms()
+        atoms.arrays[energy_key] = np.array(mol.energy)
+        if force_key is not None:
+            try:                            # 没有力数据的行由 worker 报缺失键
+                atoms.arrays[force_key] = np.asarray(mol.forces)
+            except Exception:
+                pass
+
+        buf_atoms.append(atoms)
+        buf_keys.append(f'{group}#{frame}')
+        counts[group] = counts.get(group, 0) + 1
+
+        if len(buf_atoms) >= chunk:
+            yield buf_atoms, buf_keys
+            buf_atoms, buf_keys = [], []
+    if buf_atoms:
+        yield buf_atoms, buf_keys
+
+
+def ase_db2AtomsData_parallel(source, check_rcut: float,
+                              properties: list = ('energy', 'force'),
+                              subset: str = None,
+                              n_jobs: int = 1, chunk: int = 128,
+                              frame_stride: int = 1,
+                              limit_per_system: int = None,
+                              group_key: str = 'system',
+                              return_failures: bool = False):
+    """把 ase.db 并行转换为 AtomsData list。
+
+    与逐帧串行写法的区别：
+
+    1. 每帧的连通性检查（3x3x3 扩胞 cdist）分散到 worker 进程，支持 n_jobs 并行；
+    2. 失败结构不再 print(atoms) 后静默丢弃，而是统一收集返回；
+    3. frame_stride / limit_per_system 可降采样——力场训练必须用
+       return_type='basic'，一个 48 原子的合金结构约占 9.6 MB 索引，
+       两万结构需要上百 GB 内存。
+
+    参数
+    ----
+    source : str | SQLite3Database
+        db 路径，或已 connect 的 ase.db 对象。
+    check_rcut : float
+        连通性检查半径，通常取 pml_rcut。
+    properties : list
+        需要写入 AtomsData 的属性名，同时也是 atoms.arrays 的键名。
+        ASE db 的 energy / forces 分别映射到 arrays['energy'] / arrays['force']。
+    subset : str, None
+        按 db 的 kvp ``subset`` 过滤，如 'train' / 'val' / 'test'。
+    n_jobs : int
+        进程数；<=1 时退化为串行（避免小数据集上的进程启动开销）。
+    chunk : int
+        每个任务包含的结构数，越大通信开销越小。
+    frame_stride, limit_per_system, group_key
+        降采样控制，见 :func:`_iter_db_atoms`。
+    return_failures : bool
+        为 True 时返回 ``(data_list, failures)``。
+
+    注意
+    ----
+    子进程会重新 import DIGNN，因此 DIGNN_ENV 由环境变量决定。若父进程设为
+    cuda，每个 worker 都会建立独立 CUDA context，应把 n_jobs 控制在显存允许的
+    范围内；这一步的瓶颈是 scipy 的 connected_components 而非 cdist，用 CPU
+    并行通常更划算。
+    """
+    properties = tuple(properties or ())
+    force_key = 'force' if 'force' in properties else None
+
+    def _chunk_factory():
+        """chunks 是生成器只能消费一次，每个分支各自新建一份。"""
+        return _iter_db_atoms(source, subset=subset, chunk=chunk,
+                              frame_stride=frame_stride,
+                              limit_per_system=limit_per_system,
+                              group_key=group_key, force_key=force_key)
+
+    data_list, failures = [], []
+    if n_jobs is None or n_jobs <= 1:
+        iterator = (_convert_chunk_worker(atoms_list, keys, check_rcut, properties)
+                    for atoms_list, keys in _chunk_factory())
+        iterator = tqdm.tqdm(iterator, desc='ase2AtomsData(serial)', unit='chunk')
+    else:
+        tasks = (delayed(_convert_chunk_worker)(atoms_list, keys, check_rcut, properties)
+                 for atoms_list, keys in _chunk_factory())
+        try:
+            iterator = Parallel(n_jobs=n_jobs, prefer='processes',
+                                return_as='generator_unordered')(tasks)
+        except TypeError:                   # joblib < 1.3 没有 return_as
+            iterator = iter(Parallel(n_jobs=n_jobs, prefer='processes')(tasks))
+        iterator = tqdm.tqdm(iterator, desc='ase2AtomsData(parallel)', unit='chunk')
+
+    for good, bad in iterator:
+        data_list.extend(good)
+        failures.extend(bad)
+
+    if failures:
+        print(f'[ase_db2AtomsData_parallel] {len(failures)} 个结构转换失败，前 5 条：')
+        for key, msg in failures[:5]:
+            print(f'    {key}: {msg}')
+
+    return (data_list, failures) if return_failures else data_list
 
 def AtomsData2ase(data: AtomsData, properties: list[str]=None) -> Atoms:
     """

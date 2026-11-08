@@ -266,7 +266,10 @@ class TrainModule_FF(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         energy, force = self(batch)
-        atom_num = batch.atom_ptr.diff().view(-1, 1)
+        # 不能用 batch.atom_ptr: 它是单结构 [0, natoms] 被 collate 按 dim0 拼接后的
+        # 2n 长向量, diff 得到 2n-1 个带正负号的元素, 与 energy 的 n 维长度不符。
+        # ptr 是 PyG 维护的结构边界 (长度 n+1), 周期与非周期体系都成立。
+        atom_num = batch.ptr.diff().view(-1, 1)
         
         mae_ene = self.mae_criterion(energy.view(-1, 1), batch.energy.view(-1, 1))
         mae_ene_peratom = self.mae_criterion(energy.view(-1, 1)/atom_num, batch.energy.view(-1, 1)/atom_num)
@@ -280,7 +283,10 @@ class TrainModule_FF(pl.LightningModule):
 
     def test_step(self, batch, batch_idx):
         energy, force = self(batch)
-        atom_num = batch.atom_ptr.diff().view(-1, 1)
+        # 不能用 batch.atom_ptr: 它是单结构 [0, natoms] 被 collate 按 dim0 拼接后的
+        # 2n 长向量, diff 得到 2n-1 个带正负号的元素, 与 energy 的 n 维长度不符。
+        # ptr 是 PyG 维护的结构边界 (长度 n+1), 周期与非周期体系都成立。
+        atom_num = batch.ptr.diff().view(-1, 1)
         
         mae_ene = self.mae_criterion(energy.view(-1, 1), batch.energy.view(-1, 1))
         mae_ene_peratom = self.mae_criterion(energy.view(-1, 1)/atom_num, batch.energy.view(-1, 1)/atom_num)

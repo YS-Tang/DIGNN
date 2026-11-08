@@ -201,22 +201,33 @@ def ase_db2AtomsData_parallel(source, check_rcut: float,
 
     data_list, failures = [], []
     if n_jobs is None or n_jobs <= 1:
-        iterator = (_convert_chunk_worker(atoms_list, keys, check_rcut, properties)
-                    for atoms_list, keys in _chunk_factory())
-        iterator = tqdm.tqdm(iterator, desc='ase2AtomsData(serial)', unit='chunk')
+        for atoms_list, keys in tqdm.tqdm(_chunk_factory(),
+                                         desc='ase2AtomsData(serial)', unit='chunk'):
+            good, bad = _convert_chunk_worker(atoms_list, keys, check_rcut, properties)
+            data_list.extend(good)
+            failures.extend(bad)
     else:
-        tasks = (delayed(_convert_chunk_worker)(atoms_list, keys, check_rcut, properties)
-                 for atoms_list, keys in _chunk_factory())
-        try:
-            iterator = Parallel(n_jobs=n_jobs, prefer='processes',
-                                return_as='generator_unordered')(tasks)
-        except TypeError:                   # joblib < 1.3 没有 return_as
-            iterator = iter(Parallel(n_jobs=n_jobs, prefer='processes')(tasks))
-        iterator = tqdm.tqdm(iterator, desc='ase2AtomsData(parallel)', unit='chunk')
-
-    for good, bad in iterator:
-        data_list.extend(good)
-        failures.extend(bad)
+        # 不能把持有 db 游标的懒生成器直接交给 Parallel：joblib 的
+        # dispatch_one_batch 会在内部回调线程里 islice() 预取任务，而
+        # ASE 的 db.select() 游标绑定在主线程创建的 sqlite 连接上，跨线程
+        # 使用会报 "SQLite objects created in a thread can only be used in
+        # that same thread"。因此在这里按窗口自己取 chunk，交给 Parallel
+        # 的只是 list（list 的迭代器无副作用，线程安全）。
+        from itertools import islice
+        chunk_iter = _chunk_factory()
+        window = max(int(n_jobs) * 4, 16)
+        with tqdm.tqdm(desc='ase2AtomsData(parallel)', unit='chunk') as pbar:
+            while True:
+                batch = list(islice(chunk_iter, window))   # 主线程消费 sqlite 游标
+                if not batch:
+                    break
+                results = Parallel(n_jobs=n_jobs, prefer='processes')(
+                    delayed(_convert_chunk_worker)(atoms_list, keys, check_rcut, properties)
+                    for atoms_list, keys in batch)
+                for good, bad in results:
+                    data_list.extend(good)
+                    failures.extend(bad)
+                pbar.update(len(batch))
 
     if failures:
         print(f'[ase_db2AtomsData_parallel] {len(failures)} 个结构转换失败，前 5 条：')
